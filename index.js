@@ -20,6 +20,7 @@ let cronExpression = '0 * * * *'; // Default setiap jam
 let isSpamming = false;
 let blacklistedGroups = [];
 let sendDelayMs = 60000; // Default 1 menit (60000 ms)
+let lastNonCommandMessage = null;
 
 // Load saved message and config if exists
 if (fs.existsSync('./config.json')) {
@@ -99,6 +100,11 @@ async function startBot() {
             console.log(`[INFO] Pesan dari Anda: ${text}`);
         }
 
+        const isCommand = text.startsWith('.');
+        if (!isCommand) {
+            lastNonCommandMessage = msg;
+        }
+
         const args = text.split(' ');
         const command = args[0].toLowerCase();
 
@@ -108,7 +114,13 @@ async function startBot() {
             let response = `*DAFTAR GRUP (${groups.length} Grup)*\n\n`;
             groups.forEach((group, i) => {
                 const isBlacklisted = blacklistedGroups.includes(group.id);
-                response += `${i + 1}. ${group.subject} ${isBlacklisted ? '(🚫 BLACKLIST)' : ''}\nID: ${group.id}\n\n`;
+                const isAdminOnly = group.announce; // Jika true, hanya admin yang bisa chat
+                const isAnnounceGroup = group.isCommunityAnnounce; // Grup pengumuman komunitas
+                
+                let statusIcon = isAdminOnly ? '🔒 (Admin Only)' : '🔓 (Terbuka)';
+                if (isAnnounceGroup) statusIcon = '📢 (Pengumuman)';
+                
+                response += `${i + 1}. ${group.subject} ${isBlacklisted ? '🚫' : ''}\nStatus: ${statusIcon}\nID: ${group.id}\n\n`;
             });
             await sock.sendMessage(jid, { text: response });
         }
@@ -156,10 +168,8 @@ async function startBot() {
         }
 
         if (command === '.setpesan') {
-            // Cek apakah me-reply pesan
             const contextInfo = msg.message[messageType]?.contextInfo;
             if (contextInfo && contextInfo.quotedMessage) {
-                // Simpan pesan yang di-reply
                 savedMessage = {
                     key: {
                         remoteJid: jid,
@@ -170,9 +180,14 @@ async function startBot() {
                     message: contextInfo.quotedMessage
                 };
                 saveConfig();
-                await sock.sendMessage(jid, { text: '✅ Pesan promosi berhasil disimpan! (Termasuk forward dari saluran)' });
+                await sock.sendMessage(jid, { text: '✅ Pesan promosi berhasil disimpan dari reply!' });
+            } else if (lastNonCommandMessage) {
+                // Simpan pesan utuh (deep copy) untuk menghindari masalah referensi
+                savedMessage = JSON.parse(JSON.stringify(lastNonCommandMessage));
+                saveConfig();
+                await sock.sendMessage(jid, { text: '✅ Pesan promosi berhasil disimpan dari pesan terakhir yang dikirim!\n\n*(Cocok untuk forward dari Saluran karena sumber/metadata saluran tidak akan hilang)*' });
             } else {
-                await sock.sendMessage(jid, { text: '❌ Silakan reply pesan yang ingin dijadikan bahan promosi spam dengan mengetik .setpesan\n\nBisa berupa teks, gambar, atau pesan yang di-forward dari saluran.' });
+                await sock.sendMessage(jid, { text: '❌ Anda belum mengirim pesan apapun sebelumnya untuk disave.\n\n*Cara terbaik:* Forward pesan dari saluran ke chat ini, lalu kirim .setpesan (jangan di-reply).' });
             }
         }
 
@@ -246,7 +261,7 @@ async function startBot() {
             `Bot ini berjalan pada nomor ini sendiri (ngobrol sendiri), tidak membalas chat orang lain.\n\n` +
             `*Daftar Perintah:*\n` +
             `1. *.listgrup* : Melihat semua grup (termasuk status blacklist)\n` +
-            `2. *.setpesan* : Reply pesan untuk disave sebagai promosi\n` +
+            `2. *.setpesan* : Forward pesan dari saluran, lalu kirim .setpesan (jangan di-reply)\n` +
             `3. *.setwaktu <angka> <detik/menit/jam>* : Mengatur perulangan kirim semua. Contoh: *.setwaktu 30 menit*\n` +
             `4. *.setjeda <angka> <detik/menit>* : Mengatur jeda kirim antar grup. Contoh: *.setjeda 1 menit*\n` +
             `5. *.blacklist <id_grup>* : Supaya grup tersebut tidak disebarkan promosi\n` +
@@ -264,19 +279,41 @@ async function startBot() {
                 await sock.sendMessage(jid, { text: '❌ Anda belum mengatur pesan promosi!' });
                 return;
             }
+
             const groupMetadata = await sock.groupFetchAllParticipating();
-            const groups = Object.values(groupMetadata);
-            if (groups.length === 0) {
-                await sock.sendMessage(jid, { text: '❌ Bot belum bergabung di grup mana pun.' });
-                return;
+            const allGroups = Object.values(groupMetadata);
+            
+            let targetGroupJid = args[1]; // Mengambil ID grup jika diberikan
+            let targetGroupName = "";
+
+            if (targetGroupJid) {
+                const group = allGroups.find(g => g.id === targetGroupJid);
+                if (!group) {
+                    await sock.sendMessage(jid, { text: `❌ ID grup tidak ditemukan di daftar grup yang Anda ikuti.` });
+                    return;
+                }
+                targetGroupName = group.subject;
+            } else {
+                // Jika tidak ada argumen, cari grup pertama yang tidak di-blacklist
+                const availableGroups = allGroups.filter(g => !blacklistedGroups.includes(g.id));
+                if (availableGroups.length === 0) {
+                    await sock.sendMessage(jid, { text: '❌ Tidak ada grup yang tersedia (semua grup di-blacklist atau belum gabung grup).' });
+                    return;
+                }
+                targetGroupJid = availableGroups[0].id;
+                targetGroupName = availableGroups[0].subject;
             }
-            const targetGroup = groups[0].id;
-            await sock.sendMessage(jid, { text: `🔄 Mengetes kirim ke grup: ${groups[0].subject}...` });
+
+            await sock.sendMessage(jid, { text: `🔄 Mengetes kirim ke grup: *${targetGroupName}*...` });
             try {
-                await sock.sendMessage(targetGroup, { forward: savedMessage });
-                await sock.sendMessage(jid, { text: `✅ Berhasil dikirim ke grup: ${groups[0].subject}` });
+                console.log(`[TES] Mencoba kirim ke: ${targetGroupName} (${targetGroupJid})`);
+                // Menggunakan relayMessage untuk bypass validasi media dan menjaga metadata asli (View Channel)
+                await sock.relayMessage(targetGroupJid, savedMessage.message, { messageId: sock.generateMessageTag() });
+                console.log(`[TES] Berhasil dikirim ke: ${targetGroupName}`);
+                await sock.sendMessage(jid, { text: `✅ Berhasil dikirim ke grup: *${targetGroupName}*` });
             } catch (err) {
-                await sock.sendMessage(jid, { text: `❌ Gagal mengirim tes: ${err.message}` });
+                console.error(`[TES] Gagal kirim ke ${targetGroupName}:`, err);
+                await sock.sendMessage(jid, { text: `❌ Gagal mengirim tes ke *${targetGroupName}*: ${err.message}` });
             }
         }
     });
@@ -295,19 +332,39 @@ async function startBot() {
                 let failCount = 0;
 
                 for (let group of groups) {
+                    const isAdminOnly = group.announce;
+                    const isAnnounceGroup = group.isCommunityAnnounce;
+
                     if (blacklistedGroups.includes(group.id)) {
                         console.log(`Melewati grup ${group.subject} (Di-blacklist)`);
                         continue;
                     }
 
+                    if (isAnnounceGroup) {
+                        console.log(`Melewati grup ${group.subject} (Grup Pengumuman)`);
+                        continue;
+                    }
+
+                    if (isAdminOnly) {
+                        // Cek apakah bot adalah admin di grup tersebut
+                        const me = group.participants.find(p => jidNormalizedUser(p.id) === jidNormalizedUser(sock.user.id));
+                        const isMeAdmin = me?.admin || false;
+                        
+                        if (!isMeAdmin) {
+                            console.log(`Melewati grup ${group.subject} (Hanya Admin)`);
+                            continue;
+                        }
+                    }
+
                     try {
-                        await sock.sendMessage(group.id, { forward: savedMessage });
+                        console.log(`[SPAM] Mencoba kirim ke: ${group.subject}...`);
+                        // Menggunakan relayMessage untuk bypass validasi media dan menjaga metadata asli (View Channel)
+                        await sock.relayMessage(group.id, savedMessage.message, { messageId: sock.generateMessageTag() });
                         successCount++;
-                        console.log(`Berhasil kirim ke ${group.subject}. Jeda ${sendDelayMs/1000} detik...`);
-                        // Jeda agar tidak kena ban WA sesuai pengaturan (default 1 menit)
+                        console.log(`[SPAM] Berhasil kirim ke ${group.subject}. Jeda ${sendDelayMs/1000} detik...`);
                         await new Promise(resolve => setTimeout(resolve, sendDelayMs));
                     } catch (e) {
-                        console.error(`Gagal kirim ke ${group.subject}`, e);
+                        console.error(`[SPAM] Gagal kirim ke ${group.subject}:`, e);
                         failCount++;
                     }
                 }
