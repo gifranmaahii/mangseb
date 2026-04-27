@@ -326,7 +326,7 @@ async function startBot() {
             console.log('Menjalankan spam ke semua grup...');
             try {
                 const groupMetadata = await sock.groupFetchAllParticipating();
-                const groups = Object.values(groupMetadata);
+                const groups = Object.values(groupMetadata).reverse();
                 
                 let successCount = 0;
                 let failCount = 0;

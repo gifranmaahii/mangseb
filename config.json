@@ -1,0 +1,45 @@
+{
+  "savedMessage": {
+    "key": {
+      "remoteJid": "152188357705821@lid",
+      "remoteJidAlt": "6287778262797@s.whatsapp.net",
+      "fromMe": true,
+      "id": "2A44C5E29BA2826F2539",
+      "participant": "",
+      "addressingMode": "lid"
+    },
+    "messageTimestamp": 1777278513,
+    "pushName": "rubyyyy",
+    "broadcast": false,
+    "status": 2,
+    "message": {
+      "extendedTextMessage": {
+        "text": "Bot Upload Channel/Saluran 3Rb/Bulan (Bawa Akun sendiri)\n\n10rb/Bulan (Akun Whatsapp Dari Kami)",
+        "contextInfo": {
+          "isForwarded": true,
+          "forwardedNewsletterMessageInfo": {
+            "newsletterJid": "120363426786451143@newsletter",
+            "serverMessageId": 105,
+            "newsletterName": "Bot Upload Channel/Saluran WA",
+            "contentType": "UPDATE"
+          }
+        }
+      }
+    }
+  },
+  "cronExpression": "*/5 * * * *",
+  "blacklistedGroups": [
+    "120363401758968770@g.us",
+    "120363405195001146@g.us",
+    "120363418065259989@g.us",
+    "120363427046485078@g.us",
+    "120363425538835775@g.us",
+    "120363420852774693@g.us",
+    "120363418810482660@g.us",
+    "120363312319551581@g.us",
+    "120363421302042889@g.us",
+    "120363399684050579@g.us",
+    "120363420585653929@g.us"
+  ],
+  "sendDelayMs": 30000
+}
