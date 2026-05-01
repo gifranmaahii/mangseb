@@ -5,7 +5,9 @@ const {
     fetchLatestBaileysVersion,
     makeCacheableSignalKeyStore,
     jidNormalizedUser,
-    getContentType
+    getContentType,
+    generateWAMessageFromContent,
+    proto
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
@@ -473,26 +475,46 @@ async function startBot() {
 
             if (args.length === 1) {
                 if (available.length === 0) {
-                    return await sock.sendMessage(jid, { text: '✅ Semua grup sudah di-blacklist atau belum gabung grup.' });
+                    return await sock.sendMessage(jid, { text: '✅ Semua grup sudah di-blacklist.' });
                 }
 
-                // Gunakan Poll sebagai pengganti tombol (Karena tombol List/Button sudah diblokir WA untuk akun biasa)
-                const options = available.slice(0, 11).map(g => g.subject.substring(0, 50));
-                options.push('❌ BATAL');
+                // Native Flow List Message (Tampilan "List Menu" sesuai gambar)
+                const sections = [{
+                    title: 'Daftar Grup Tersedia',
+                    rows: available.slice(0, 50).map(g => ({
+                        header: '',
+                        title: g.subject.substring(0, 24),
+                        description: `ID: ${g.id}`,
+                        id: `.blacklist ${g.id}`
+                    }))
+                }];
 
-                await sock.sendMessage(jid, {
-                    poll: {
-                        name: '🚫 *PILIH GRUP UNTUK BLACKLIST*\n(Klik pada nama grup di bawah untuk mem-blacklist)',
-                        values: options,
-                        selectableCount: 1
+                const listMsg = generateWAMessageFromContent(jid, {
+                    viewOnceMessage: {
+                        message: {
+                            interactiveMessage: {
+                                body: { text: "Pilih grup yang ingin Anda masukkan ke daftar *Blacklist*.\nPesan promosi tidak akan dikirim ke grup yang dipilih." },
+                                footer: { text: "Spam Bot Pro" },
+                                header: { title: "🚫 *BLACKLIST GRUP*", hasSubtitle: false },
+                                nativeFlowMessage: {
+                                    buttons: [{
+                                        name: "single_select",
+                                        buttonParamsJson: JSON.stringify({
+                                            title: "Pilih Grup",
+                                            sections: sections
+                                        })
+                                    }]
+                                }
+                            }
+                        }
                     }
-                });
-                
-                await sock.sendMessage(jid, { text: `💡 *Info:* Silakan pilih nama grup pada Polling di atas. Pesan promosi tidak akan masuk ke grup yang dipilih.` });
+                }, { userJid: sock.user.id, quoted: msg });
+
+                await sock.relayMessage(jid, listMsg.message, { messageId: listMsg.key.id });
                 return;
             }
 
-            // Manual handling for .blacklist <id> or <nomor>
+            // Manual handling
             let addedCount = 0;
             for (let i = 1; i < args.length; i++) {
                 const target = args[i];
@@ -509,7 +531,7 @@ async function startBot() {
                 saveConfig();
                 await sock.sendMessage(jid, { text: `✅ Berhasil mem-blacklist ${addedCount} grup.` });
             } else {
-                await sock.sendMessage(jid, { text: `⚠️ Gagal/Sudah ada di blacklist.` });
+                await sock.sendMessage(jid, { text: `⚠️ Gagal/ID salah.` });
             }
         }
 
@@ -520,19 +542,41 @@ async function startBot() {
 
             if (args.length === 1) {
                 if (blacklisted.length === 0) {
-                    return await sock.sendMessage(jid, { text: '⚠️ Tidak ada grup dalam daftar blacklist.' });
+                    return await sock.sendMessage(jid, { text: '⚠️ Tidak ada grup ter-blacklist.' });
                 }
 
-                const options = blacklisted.slice(0, 11).map(g => g.subject.substring(0, 50));
-                options.push('❌ BATAL');
+                const sections = [{
+                    title: 'Daftar Grup Ter-blacklist',
+                    rows: blacklisted.slice(0, 50).map(g => ({
+                        header: '',
+                        title: g.subject.substring(0, 24),
+                        description: `ID: ${g.id}`,
+                        id: `.unblacklist ${g.id}`
+                    }))
+                }];
 
-                await sock.sendMessage(jid, {
-                    poll: {
-                        name: '🔓 *PILIH GRUP UNTUK UN-BLACKLIST*\n(Klik pada nama grup untuk mengaktifkan kembali)',
-                        values: options,
-                        selectableCount: 1
+                const unlistMsg = generateWAMessageFromContent(jid, {
+                    viewOnceMessage: {
+                        message: {
+                            interactiveMessage: {
+                                body: { text: "Pilih grup yang ingin Anda keluarkan dari daftar *Blacklist*.\nBot akan mengirim promosi kembali ke grup ini." },
+                                footer: { text: "Spam Bot Pro" },
+                                header: { title: "🔓 *UN-BLACKLIST GRUP*", hasSubtitle: false },
+                                nativeFlowMessage: {
+                                    buttons: [{
+                                        name: "single_select",
+                                        buttonParamsJson: JSON.stringify({
+                                            title: "Buka Daftar",
+                                            sections: sections
+                                        })
+                                    }]
+                                }
+                            }
+                        }
                     }
-                });
+                }, { userJid: sock.user.id, quoted: msg });
+
+                await sock.relayMessage(jid, unlistMsg.message, { messageId: unlistMsg.key.id });
                 return;
             }
 
@@ -553,7 +597,7 @@ async function startBot() {
                 saveConfig();
                 await sock.sendMessage(jid, { text: `✅ Berhasil menghapus ${removedCount} grup dari blacklist.` });
             } else {
-                await sock.sendMessage(jid, { text: `⚠️ Tidak ditemukan.` });
+                await sock.sendMessage(jid, { text: `⚠️ Gagal menghapus.` });
             }
         }
 
