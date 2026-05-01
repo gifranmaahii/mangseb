@@ -118,11 +118,11 @@ async function sendWithRetry(groupId, message, maxRetries = 3) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
             // Cek koneksi sebelum kirim
-            if (activeSock.ws?.readyState !== 1) { // 1 = OPEN
-                console.log(`[RETRY] WebSocket tidak OPEN (state: ${activeSock.ws?.readyState}), tunggu 3 detik...`);
+            if (!activeSock.ws?.isOpen) {
+                console.log(`[RETRY] WebSocket tidak OPEN, tunggu 3 detik...`);
                 await new Promise(r => setTimeout(r, 3000));
-                if (activeSock.ws?.readyState !== 1) {
-                    throw new Error(`WebSocket masih tidak OPEN setelah menunggu (state: ${activeSock.ws?.readyState})`);
+                if (!activeSock.ws?.isOpen) {
+                    throw new Error(`WebSocket masih tidak OPEN setelah menunggu`);
                 }
             }
 
@@ -190,10 +190,10 @@ async function runSpamCycle() {
         
         try {
             // Cek koneksi sebelum mulai
-            if (activeSock.ws?.readyState !== 1) {
-                console.error(`[SPAM] WebSocket tidak terkoneksi (state: ${activeSock.ws?.readyState}). Menunggu reconnect...`);
+            if (!activeSock.ws?.isOpen) {
+                console.error(`[SPAM] WebSocket tidak terkoneksi. Menunggu reconnect...`);
                 await new Promise(r => setTimeout(r, 5000));
-                if (activeSock.ws?.readyState !== 1) {
+                if (!activeSock.ws?.isOpen) {
                     console.error(`[SPAM] Masih tidak terkoneksi. Melewati siklus ini.`);
                     try {
                         if (spamOwnerJid) {
