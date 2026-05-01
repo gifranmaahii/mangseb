@@ -30,6 +30,8 @@ let sleepTimeStart = -1; // -1 berarti dimatikan (format 0-23)
 let sleepTimeEnd = -1;
 let autoDeleteMs = 0; // 0 berarti tidak ditarik
 let useHidetag = false; // Flag hidetag
+let autoClearChat = false; // Hapus chat setelah spam
+let blacklistKeywords = []; // Filter kata nama grup
 let lastNonCommandMessage = null;
 let activeSock = null; // Socket global, selalu di-update saat reconnect
 let spamOwnerJid = null; // JID owner yang start spam
@@ -49,6 +51,8 @@ if (fs.existsSync(configFile)) {
         sleepTimeEnd = config.sleepTimeEnd !== undefined ? config.sleepTimeEnd : -1;
         autoDeleteMs = config.autoDeleteMs || 0;
         useHidetag = config.useHidetag || false;
+        autoClearChat = config.autoClearChat || false;
+        blacklistKeywords = config.blacklistKeywords || [];
     } catch (e) {
         console.error('Error loading config:', e);
     }
@@ -64,7 +68,9 @@ function saveConfig() {
         sleepTimeStart,
         sleepTimeEnd,
         autoDeleteMs,
-        useHidetag
+        useHidetag,
+        autoClearChat,
+        blacklistKeywords
     }, null, 2));
 }
 
@@ -349,6 +355,16 @@ async function runSpamCycle() {
                     continue;
                 }
 
+                if (blacklistKeywords.length > 0) {
+                    const groupNameLower = group.subject.toLowerCase();
+                    const isKeywordMatched = blacklistKeywords.some(kw => groupNameLower.includes(kw));
+                    if (isKeywordMatched) {
+                        console.log(`[SKIP] ${group.subject} (Filter Keyword)`);
+                        skipCount++;
+                        continue;
+                    }
+                }
+
                 if (isAdminOnly) {
                     const me = group.participants.find(p => jidNormalizedUser(p.id) === jidNormalizedUser(activeSock.user.id));
                     const isMeAdmin = me?.admin || false;
@@ -379,6 +395,19 @@ async function runSpamCycle() {
                                 console.log(`[AUTO-DELETE] ❌ Gagal menarik pesan di ${group.subject}: ${e.message}`);
                             }
                         }, autoDeleteMs);
+                    }
+                    
+                    if (autoClearChat) {
+                        try {
+                            const ts = Math.floor(Date.now() / 1000);
+                            await activeSock.chatModify({ 
+                                delete: true, 
+                                lastMessages: [{ key: { remoteJid: group.id, id: sentMsgId, fromMe: true }, messageTimestamp: ts }] 
+                            }, group.id);
+                            console.log(`[AUTO-CLEAR] ✅ Berhasil membersihkan chat di ${group.subject}`);
+                        } catch(e) {
+                            console.log(`[AUTO-CLEAR] ❌ Gagal membersihkan chat di ${group.subject}: ${e.message}`);
+                        }
                     }
                 } else {
                     failCount++;
@@ -739,6 +768,65 @@ async function startBot() {
             }
         }
 
+        if (command === '.autoclear') {
+            const opt = args[1] ? args[1].toLowerCase() : '';
+            if (opt === 'on') {
+                autoClearChat = true;
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ Fitur Auto-Clear Chat diaktifkan!\nBot akan otomatis menghapus riwayat chat di grup setelah selesai mengirim promosi, agar WA tidak ngelag.` });
+            } else if (opt === 'off') {
+                autoClearChat = false;
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ Fitur Auto-Clear Chat dimatikan.` });
+            } else {
+                await sock.sendMessage(jid, { text: `❌ Format salah.\nGunakan: .autoclear on\nAtau: .autoclear off` });
+            }
+        }
+
+        if (command === '.cleangrup') {
+            await sock.sendMessage(jid, { text: '⏳ *Memindai grup...*\nMencari grup "Admin Only" di mana bot tidak bisa mengirim pesan...' });
+            try {
+                const groupMetadataList = await sock.groupFetchAllParticipating();
+                const groupsList = Object.values(groupMetadataList);
+                let leaveCount = 0;
+                
+                for (const group of groupsList) {
+                    if (group.announce) {
+                        const me = group.participants.find(p => p.id.includes(activeSock.user.id.split(':')[0]));
+                        if (!me?.admin) {
+                            try {
+                                await activeSock.groupLeave(group.id);
+                                leaveCount++;
+                                console.log(`[LEAVE] Keluar dari grup Admin Only: ${group.subject}`);
+                                await new Promise(r => setTimeout(r, 2000)); // Jeda agar tidak kena rate limit
+                            } catch(e) {
+                                console.log(`[LEAVE] Gagal keluar dari ${group.subject}:`, e.message);
+                            }
+                        }
+                    }
+                }
+                await sock.sendMessage(jid, { text: `✅ *Pembersihan Selesai!*\nBot telah keluar (Leave) dari *${leaveCount}* grup sampah (Admin Only). Ruang grup Anda sekarang lebih lega!` });
+            } catch(e) {
+                await sock.sendMessage(jid, { text: `❌ Terjadi kesalahan saat pembersihan grup.` });
+            }
+        }
+
+        if (command === '.blacklistkata') {
+            const keywords = text.substring(14).trim();
+            if (!keywords) {
+                await sock.sendMessage(jid, { text: `*Daftar Keyword Blacklist saat ini:*\n${blacklistKeywords.length > 0 ? blacklistKeywords.join(', ') : 'TIDAK ADA'}\n\n*Cara set:* .blacklistkata agama, keluarga, rt\n*Cara hapus semua:* .blacklistkata off` });
+                return;
+            }
+            if (keywords.toLowerCase() === 'off' || keywords.toLowerCase() === 'clear') {
+                blacklistKeywords = [];
+                saveConfig();
+                return await sock.sendMessage(jid, { text: `✅ Semua keyword blacklist berhasil dihapus.` });
+            }
+            blacklistKeywords = keywords.split(',').map(k => k.trim().toLowerCase()).filter(k => k);
+            saveConfig();
+            await sock.sendMessage(jid, { text: `✅ Keyword blacklist berhasil disimpan. Bot tidak akan promosi ke grup yang namanya mengandung kata:\n*${blacklistKeywords.join(', ')}*` });
+        }
+
         if (command === '.setpesan') {
             const contextInfo = msg.message[messageType]?.contextInfo;
             if (contextInfo && contextInfo.quotedMessage) {
@@ -889,7 +977,9 @@ async function startBot() {
             statusText += `Hidetag (Mention All): ${useHidetag ? '✅ ON' : '❌ OFF'}\n`;
             statusText += `Jam Tidur (Sleep): ${sleepTimeStart !== -1 ? `${sleepTimeStart}:00 - ${sleepTimeEnd}:00` : '❌ OFF (24 Jam)'}\n`;
             statusText += `Auto-Tarik Pesan: ${autoDeleteMs > 0 ? `${autoDeleteMs / 1000} detik` : '❌ OFF'}\n`;
-            statusText += `Grup Blacklist: ${blacklistedGroups.length} grup\n`;
+            statusText += `Auto-Clear Chat: ${autoClearChat ? '✅ ON' : '❌ OFF'}\n`;
+            statusText += `Grup Blacklist (Manual): ${blacklistedGroups.length} grup\n`;
+            statusText += `Filter Kata Grup: ${blacklistKeywords.length > 0 ? blacklistKeywords.join(', ') : '❌ OFF'}\n`;
             statusText += `Rotasi Promosi: ${savedMessages.length > 1 ? `✅ Aktif (${savedMessages.length} pesan)` : '❌ OFF (1 pesan)'}\n`;
             statusText += `Pesan Utama: ${savedMessage ? '✅ Ada' : '❌ Belum di-set'}\n\n`;
             statusText += `Ketik .menu untuk melihat daftar perintah.`;
@@ -905,9 +995,12 @@ async function startBot() {
             `.setwaktu <angka> <menit/jam>\n` +
             `.setjeda <angka> <detik>\n` +
             `.sethidetag <on/off>\n` +
+            `.autoclear <on/off>\n` +
             `.setautodelete <angka> <detik/menit> | off\n` +
             `.setsleep <jamMulai> <jamSelesai> | off\n` +
+            `.cleangrup\n` +
             `.blacklist\n` +
+            `.blacklistkata <kata1, kata2>\n` +
             `.unblacklist\n` +
             `.startspam\n` +
             `.stopspam\n` +
