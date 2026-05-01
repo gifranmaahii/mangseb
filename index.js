@@ -20,6 +20,7 @@ const sessionName = process.argv[2] || 'auth_info';
 const configFile = process.argv[2] ? `./config_${process.argv[2]}.json` : './config.json';
 
 let savedMessage = null;
+let savedMessages = []; // Untuk Multi-Pesan (Rotasi)
 let spamJob = null;
 let cronExpression = '0 * * * *'; // Default setiap jam
 let isSpamming = false;
@@ -40,6 +41,7 @@ if (fs.existsSync(configFile)) {
     try {
         const config = JSON.parse(fs.readFileSync(configFile));
         savedMessage = config.savedMessage || null;
+        savedMessages = config.savedMessages || (savedMessage ? [savedMessage] : []);
         cronExpression = config.cronExpression || '0 * * * *';
         blacklistedGroups = config.blacklistedGroups || [];
         sendDelayMs = config.sendDelayMs || 60000;
@@ -55,6 +57,7 @@ if (fs.existsSync(configFile)) {
 function saveConfig() {
     fs.writeFileSync(configFile, JSON.stringify({
         savedMessage,
+        savedMessages,
         cronExpression,
         blacklistedGroups,
         sendDelayMs,
@@ -291,7 +294,7 @@ async function runSpamCycle() {
             }
 
             // Cek savedMessage masih ada
-            if (!savedMessage || !savedMessage.message) {
+            if ((!savedMessage || !savedMessage.message) && savedMessages.length === 0) {
                 console.error('[SPAM] savedMessage kosong! Melewati siklus.');
                 try {
                     if (spamOwnerJid) {
@@ -356,7 +359,8 @@ async function runSpamCycle() {
                 }
 
                 console.log(`[SPAM] [${i+1}/${groups.length}] Mengirim ke: ${group.subject}...`);
-                const sentMsgId = await sendWithRetry(group.id, savedMessage.message, group.participants);
+                const msgObjToUse = savedMessages.length > 0 ? savedMessages[Math.floor(Math.random() * savedMessages.length)] : savedMessage;
+                const sentMsgId = await sendWithRetry(group.id, msgObjToUse.message, group.participants);
                 
                 if (sentMsgId) {
                     successCount++;
@@ -745,15 +749,44 @@ async function startBot() {
                     },
                     message: contextInfo.quotedMessage
                 };
+                savedMessages = [savedMessage]; // Reset rotasi pesan
                 saveConfig();
-                await sock.sendMessage(jid, { text: '✅ Pesan promosi berhasil disimpan dari reply!' });
+                await sock.sendMessage(jid, { text: '✅ Pesan promosi berhasil disimpan dari reply! (Pesan lama dihapus)' });
             } else if (lastNonCommandMessage) {
                 // Simpan pesan utuh (deep copy) untuk menghindari masalah referensi
                 savedMessage = JSON.parse(JSON.stringify(lastNonCommandMessage));
+                savedMessages = [savedMessage];
                 saveConfig();
                 await sock.sendMessage(jid, { text: '✅ Pesan promosi berhasil disimpan dari pesan terakhir yang dikirim!\n\n*(Cocok untuk forward dari Saluran karena sumber/metadata saluran tidak akan hilang)*' });
             } else {
                 await sock.sendMessage(jid, { text: '❌ Anda belum mengirim pesan apapun sebelumnya untuk disave.\n\n*Cara terbaik:* Forward pesan dari saluran ke chat ini, lalu kirim .setpesan (jangan di-reply).' });
+            }
+        }
+
+        if (command === '.addpesan') {
+            const contextInfo = msg.message[messageType]?.contextInfo;
+            let newMsg = null;
+            if (contextInfo && contextInfo.quotedMessage) {
+                newMsg = {
+                    key: {
+                        remoteJid: jid,
+                        fromMe: contextInfo.participant === sock.user.id,
+                        id: contextInfo.stanzaId,
+                        participant: contextInfo.participant
+                    },
+                    message: contextInfo.quotedMessage
+                };
+            } else if (lastNonCommandMessage) {
+                newMsg = JSON.parse(JSON.stringify(lastNonCommandMessage));
+            }
+
+            if (newMsg) {
+                savedMessages.push(newMsg);
+                if (!savedMessage) savedMessage = newMsg;
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ Pesan promosi berhasil ditambahkan!\n(Total ada ${savedMessages.length} pesan yang akan dirotasi secara acak)` });
+            } else {
+                await sock.sendMessage(jid, { text: '❌ Reply pesan atau kirim pesan dulu sebelum ketik .addpesan' });
             }
         }
 
@@ -789,8 +822,8 @@ async function startBot() {
         }
 
         if (command === '.startspam') {
-            if (!savedMessage) {
-                await sock.sendMessage(jid, { text: '❌ Anda belum mengatur pesan promosi! Reply pesan dengan .setpesan' });
+            if ((!savedMessage || !savedMessage.message) && savedMessages.length === 0) {
+                await sock.sendMessage(jid, { text: '❌ Anda belum mengatur pesan promosi! Reply pesan dengan .setpesan atau .addpesan' });
                 return;
             }
             if (isSpamming) {
@@ -821,7 +854,8 @@ async function startBot() {
             statusText += `Jam Tidur (Sleep): ${sleepTimeStart !== -1 ? `${sleepTimeStart}:00 - ${sleepTimeEnd}:00` : '❌ OFF (24 Jam)'}\n`;
             statusText += `Auto-Tarik Pesan: ${autoDeleteMs > 0 ? `${autoDeleteMs / 1000} detik` : '❌ OFF'}\n`;
             statusText += `Grup Blacklist: ${blacklistedGroups.length} grup\n`;
-            statusText += `Pesan Promosi: ${savedMessage ? '✅ Ada' : '❌ Belum di-set'}\n\n`;
+            statusText += `Rotasi Promosi: ${savedMessages.length > 1 ? `✅ Aktif (${savedMessages.length} pesan)` : '❌ OFF (1 pesan)'}\n`;
+            statusText += `Pesan Utama: ${savedMessage ? '✅ Ada' : '❌ Belum di-set'}\n\n`;
             statusText += `Ketik .menu untuk melihat daftar perintah.`;
             await sock.sendMessage(jid, { text: statusText });
         }
@@ -830,6 +864,7 @@ async function startBot() {
             const menuText = `*DAFTAR PERINTAH BOT*\n\n` +
             `.listgrup\n` +
             `.setpesan\n` +
+            `.addpesan\n` +
             `.setwaktu <angka> <menit/jam>\n` +
             `.setjeda <angka> <detik>\n` +
             `.sethidetag <on/off>\n` +
@@ -846,7 +881,7 @@ async function startBot() {
         }
 
         if (command === '.teskirim') {
-            if (!savedMessage) {
+            if ((!savedMessage || !savedMessage.message) && savedMessages.length === 0) {
                 await sock.sendMessage(jid, { text: '❌ Anda belum mengatur pesan promosi!' });
                 return;
             }
@@ -878,8 +913,9 @@ async function startBot() {
             await sock.sendMessage(jid, { text: `🔄 Mengetes kirim ke grup: *${targetGroupName}*...` });
             try {
                 console.log(`[TES] Mencoba kirim ke: ${targetGroupName} (${targetGroupJid})`);
+                const msgObjToUse = savedMessages.length > 0 ? savedMessages[Math.floor(Math.random() * savedMessages.length)] : savedMessage;
                 // Menggunakan relayMessage untuk bypass validasi media dan menjaga metadata asli (View Channel)
-                await sock.relayMessage(targetGroupJid, savedMessage.message, { messageId: sock.generateMessageTag() });
+                await sock.relayMessage(targetGroupJid, msgObjToUse.message, { messageId: sock.generateMessageTag() });
                 console.log(`[TES] Berhasil dikirim ke: ${targetGroupName}`);
                 await sock.sendMessage(jid, { text: `✅ Berhasil dikirim ke grup: *${targetGroupName}*` });
             } catch (err) {
