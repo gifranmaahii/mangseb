@@ -458,48 +458,16 @@ async function startBot() {
                     rowId: `.blacklist ${g.id}`
                 }));
 
-                const buttons = [{
-                    name: "single_select",
-                    buttonParamsJson: JSON.stringify({
-                        title: "Pilih Grup",
-                        sections: [{
-                            title: "Grup Tersedia",
-                            rows: rows
-                        }]
-                    })
-                }];
-
-                const msg = generateWAMessageFromContent(jid, {
-                    viewOnceMessage: {
-                        message: {
-                            messageContextInfo: {
-                                deviceListMetadata: {},
-                                deviceListMetadataVersion: 2
-                            },
-                            interactiveMessage: proto.Message.InteractiveMessage.create({
-                                body: proto.Message.InteractiveMessage.Body.create({
-                                    text: "Silakan pilih grup yang ingin di-blacklist agar tidak dikirimi pesan promosi.\n\n_Jika tombol tidak muncul, gunakan: .blacklist <id_grup>_"
-                                }),
-                                footer: proto.Message.InteractiveMessage.Footer.create({
-                                    text: "Menu Blacklist"
-                                }),
-                                header: proto.Message.InteractiveMessage.Header.create({
-                                    title: "🚫 *BLACKLIST GRUP*",
-                                    hasMediaAttachment: false
-                                }),
-                                nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-                                    buttons: buttons
-                                }),
-                                contextInfo: {
-                                    forwardingScore: 999,
-                                    isForwarded: true
-                                }
-                            })
-                        }
-                    }
-                }, { userJid: sock.user.id, quoted: m.messages[0] });
-
-                await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
+                await sock.sendMessage(jid, {
+                    text: "Silakan pilih grup yang ingin di-blacklist agar tidak dikirimi pesan promosi.\n\n_Jika menu tidak muncul, gunakan: .blacklist <id_grup>_",
+                    footer: "Menu Blacklist",
+                    title: "🚫 *BLACKLIST GRUP*",
+                    buttonText: "PILIH GRUP 📂",
+                    sections: [{
+                        title: "Grup Tersedia",
+                        rows: rows
+                    }]
+                }, { quoted: m.messages[0] });
                 return;
             }
 
@@ -540,48 +508,16 @@ async function startBot() {
                     rowId: `.unblacklist ${g.id}`
                 }));
 
-                const buttons = [{
-                    name: "single_select",
-                    buttonParamsJson: JSON.stringify({
-                        title: "Pilih Grup",
-                        sections: [{
-                            title: "Grup Ter-blacklist",
-                            rows: rows
-                        }]
-                    })
-                }];
-
-                const msg = generateWAMessageFromContent(jid, {
-                    viewOnceMessage: {
-                        message: {
-                            messageContextInfo: {
-                                deviceListMetadata: {},
-                                deviceListMetadataVersion: 2
-                            },
-                            interactiveMessage: proto.Message.InteractiveMessage.create({
-                                body: proto.Message.InteractiveMessage.Body.create({
-                                    text: "Silakan pilih grup yang ingin diaktifkan kembali.\n\n_Jika tombol tidak muncul, gunakan: .unblacklist <id_grup>_"
-                                }),
-                                footer: proto.Message.InteractiveMessage.Footer.create({
-                                    text: "Menu Un-blacklist"
-                                }),
-                                header: proto.Message.InteractiveMessage.Header.create({
-                                    title: "🔓 *UN-BLACKLIST GRUP*",
-                                    hasMediaAttachment: false
-                                }),
-                                nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-                                    buttons: buttons
-                                }),
-                                contextInfo: {
-                                    forwardingScore: 999,
-                                    isForwarded: true
-                                }
-                            })
-                        }
-                    }
-                }, { userJid: sock.user.id, quoted: m.messages[0] });
-
-                await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
+                await sock.sendMessage(jid, {
+                    text: "Silakan pilih grup yang ingin diaktifkan kembali.\n\n_Jika menu tidak muncul, gunakan: .unblacklist <id_grup>_",
+                    footer: "Menu Un-blacklist",
+                    title: "🔓 *UN-BLACKLIST GRUP*",
+                    buttonText: "PILIH GRUP 📂",
+                    sections: [{
+                        title: "Grup Ter-blacklist",
+                        rows: rows
+                    }]
+                }, { quoted: m.messages[0] });
                 return;
             }
 
@@ -733,90 +669,30 @@ async function startBot() {
         }
         
         if (command === '.menu') {
-            const menuText = `*BOT SPAM PROMOSI GRUP*\n\n` +
+            const menuText = `*🤖 MENU UTAMA BOT SPAM 🤖*\n\n` +
             `_Bot ini berjalan pada nomor ini sendiri._\n\n` +
             `*Daftar Perintah (Manual):*\n` +
-            `1️⃣ .listgrup\n` +
-            `2️⃣ .startspam\n` +
-            `3️⃣ .stopspam\n` +
-            `4️⃣ .cekconfig\n` +
-            `5️⃣ .setpesan\n` +
-            `6️⃣ .addbotjaseb\n\n` +
-            `_Jika tombol di bawah tidak muncul, silakan ketik perintah di atas secara manual._`;
+            `1️⃣ *.listgrup* : Lihat daftar grup\n` +
+            `2️⃣ *.startspam* : Mulai pengiriman\n` +
+            `3️⃣ *.stopspam* : Berhenti pengiriman\n` +
+            `4️⃣ *.cekconfig* : Cek konfigurasi\n` +
+            `5️⃣ *.setpesan* : Atur pesan promo\n` +
+            `6️⃣ *.addbotjaseb* : Tambah bot baru\n\n` +
+            `_Gunakan tombol di bawah jika muncul, atau ketik perintah di atas._`;
             
-            const buttons = [
-                {
-                    name: "single_select",
-                    buttonParamsJson: JSON.stringify({
-                        title: "KLIK UNTUK MENU 📂",
-                        sections: [
-                            {
-                                title: "UTAMA",
-                                rows: [
-                                    { title: "Daftar Grup", description: "Melihat semua grup & status", rowId: ".listgrup" },
-                                    { title: "Cek Config", description: "Melihat settingan saat ini", rowId: ".cekconfig" }
-                                ]
-                            },
-                            {
-                                title: "KONTROL",
-                                rows: [
-                                    { title: "Mulai Spam", description: "Jalankan pengiriman otomatis", rowId: ".startspam" },
-                                    { title: "Stop Spam", description: "Hentikan pengiriman", rowId: ".stopspam" }
-                                ]
-                            },
-                            {
-                                title: "LAINNYA",
-                                rows: [
-                                    { title: "Tambah Bot", description: "Metode Jadibot/Pairing", rowId: ".addbotjaseb" },
-                                    { title: "Blacklist", description: "Menu Blacklist Grup", rowId: ".blacklist" },
-                                    { title: "Unblacklist", description: "Menu Unblacklist Grup", rowId: ".unblacklist" }
-                                ]
-                            }
-                        ]
-                    })
-                },
-                {
-                    name: "quick_reply",
-                    buttonParamsJson: JSON.stringify({
-                        display_text: "START SPAM 🚀",
-                        id: ".startspam"
-                    })
-                }
+            const templateButtons = [
+                { index: 1, quickReplyButton: { displayText: '🚀 START SPAM', id: '.startspam' } },
+                { index: 2, quickReplyButton: { displayText: '📊 CEK STATUS', id: '.cekconfig' } },
+                { index: 3, quickReplyButton: { displayText: '📋 LIST GRUP', id: '.listgrup' } },
+                { index: 4, quickReplyButton: { displayText: '🤖 TAMBAH BOT', id: '.addbotjaseb' } },
             ];
 
-            const msg = generateWAMessageFromContent(jid, {
-                viewOnceMessage: {
-                    message: {
-                        messageContextInfo: {
-                            deviceListMetadata: {},
-                            deviceListMetadataVersion: 2
-                        },
-                        interactiveMessage: proto.Message.InteractiveMessage.create({
-                            body: proto.Message.InteractiveMessage.Body.create({
-                                text: menuText
-                            }),
-                            footer: proto.Message.InteractiveMessage.Footer.create({
-                                text: "Premium Bot Spam v2.1"
-                            }),
-                            header: proto.Message.InteractiveMessage.Header.create({
-                                title: "🤖 *MENU UTAMA*",
-                                subtitle: "Silakan pilih menu",
-                                hasMediaAttachment: false
-                            }),
-                            nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-                                buttons: buttons
-                            }),
-                            contextInfo: {
-                                forwardingScore: 999,
-                                isForwarded: true,
-                                mentionedJid: [sock.user.id]
-                            }
-                        })
-                    }
-                }
-            }, { userJid: sock.user.id, quoted: m.messages[0] });
-
-            await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
+            await sock.sendMessage(jid, {
+                text: menuText,
+                footer: "Premium Bot Spam v2.2",
+                templateButtons: templateButtons,
+                viewOnce: true
+            }, { quoted: m.messages[0] });
         }
 
         if (command === '.teskirim') {
