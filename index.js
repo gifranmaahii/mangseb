@@ -717,34 +717,43 @@ async function startBot() {
         }
         
         if (command === '.menu') {
-            const menuText = `Bot berjalan pada nomor ini sendiri, tidak membalas chat orang lain.`;
+            const menuText = `*BOT SPAM PROMOSI GRUP*\n\n` +
+            `_Bot ini berjalan pada nomor ini sendiri._\n\n` +
+            `*Daftar Perintah (Manual):*\n` +
+            `1️⃣ .listgrup\n` +
+            `2️⃣ .startspam\n` +
+            `3️⃣ .stopspam\n` +
+            `4️⃣ .cekconfig\n` +
+            `5️⃣ .setpesan\n` +
+            `6️⃣ .addbotjaseb\n\n` +
+            `_Jika tombol di bawah tidak muncul, silakan ketik perintah di atas secara manual._`;
             
             const buttons = [
                 {
                     name: "single_select",
                     buttonParamsJson: JSON.stringify({
-                        title: "Buka List Menu",
+                        title: "KLIK UNTUK MENU 📂",
                         sections: [
                             {
-                                title: "Utama",
+                                title: "UTAMA",
                                 rows: [
-                                    { title: "Daftar Grup", description: "Melihat semua grup", rowId: ".listgrup" },
-                                    { title: "Cek Config", description: "Melihat konfigurasi saat ini", rowId: ".cekconfig" }
+                                    { title: "Daftar Grup", description: "Melihat semua grup & status", rowId: ".listgrup" },
+                                    { title: "Cek Config", description: "Melihat settingan saat ini", rowId: ".cekconfig" }
                                 ]
                             },
                             {
-                                title: "Kontrol Spam",
+                                title: "KONTROL",
                                 rows: [
-                                    { title: "Mulai Spam", description: "Jalankan spam otomatis", rowId: ".startspam" },
-                                    { title: "Stop Spam", description: "Hentikan spam", rowId: ".stopspam" }
+                                    { title: "Mulai Spam", description: "Jalankan pengiriman otomatis", rowId: ".startspam" },
+                                    { title: "Stop Spam", description: "Hentikan pengiriman", rowId: ".stopspam" }
                                 ]
                             },
                             {
-                                title: "Fitur Lain",
+                                title: "LAINNYA",
                                 rows: [
-                                    { title: "Tambah Bot", description: "Multi-instance", rowId: ".addbotjaseb" },
-                                    { title: "Blacklist", description: "Menu blacklist", rowId: ".blacklist" },
-                                    { title: "Unblacklist", description: "Menu unblacklist", rowId: ".unblacklist" }
+                                    { title: "Tambah Bot", description: "Metode Jadibot/Pairing", rowId: ".addbotjaseb" },
+                                    { title: "Blacklist", description: "Menu Blacklist Grup", rowId: ".blacklist" },
+                                    { title: "Unblacklist", description: "Menu Unblacklist Grup", rowId: ".unblacklist" }
                                 ]
                             }
                         ]
@@ -753,15 +762,8 @@ async function startBot() {
                 {
                     name: "quick_reply",
                     buttonParamsJson: JSON.stringify({
-                        display_text: "Mulai Spam 🚀",
+                        display_text: "START SPAM 🚀",
                         id: ".startspam"
-                    })
-                },
-                {
-                    name: "quick_reply",
-                    buttonParamsJson: JSON.stringify({
-                        display_text: "Cek Status 📊",
-                        id: ".cekconfig"
                     })
                 }
             ];
@@ -769,25 +771,34 @@ async function startBot() {
             const msg = generateWAMessageFromContent(jid, {
                 viewOnceMessage: {
                     message: {
+                        messageContextInfo: {
+                            deviceListMetadata: {},
+                            deviceListMetadataVersion: 2
+                        },
                         interactiveMessage: proto.Message.InteractiveMessage.create({
                             body: proto.Message.InteractiveMessage.Body.create({
                                 text: menuText
                             }),
                             footer: proto.Message.InteractiveMessage.Footer.create({
-                                text: "Premium Bot Spam v2.0"
+                                text: "Premium Bot Spam v2.1"
                             }),
                             header: proto.Message.InteractiveMessage.Header.create({
-                                title: "🤖 *MENU UTAMA BOT SPAM*",
-                                subtitle: "Silakan pilih menu di bawah",
+                                title: "🤖 *MENU UTAMA*",
+                                subtitle: "Silakan pilih menu",
                                 hasMediaAttachment: false
                             }),
                             nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
                                 buttons: buttons
-                            })
+                            }),
+                            contextInfo: {
+                                forwardingScore: 999,
+                                isForwarded: true,
+                                mentionedJid: [sock.user.id]
+                            }
                         })
                     }
                 }
-            }, {});
+            }, { userJid: sock.user.id, quoted: m.messages[0] });
 
             await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
         }
