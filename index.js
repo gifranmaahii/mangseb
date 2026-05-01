@@ -14,6 +14,9 @@ const fs = require('fs');
 
 const logger = pino({ level: 'silent' });
 
+const sessionName = process.argv[2] || 'auth_info';
+const configFile = process.argv[2] ? `./config_${process.argv[2]}.json` : './config.json';
+
 let savedMessage = null;
 let spamJob = null;
 let cronExpression = '0 * * * *'; // Default setiap jam
@@ -28,9 +31,9 @@ let spamCycleCount = 0; // Counter siklus spam
 let spamJobRunning = false; // Flag apakah sedang proses kirim
 
 // Load saved message and config if exists
-if (fs.existsSync('./config.json')) {
+if (fs.existsSync(configFile)) {
     try {
-        const config = JSON.parse(fs.readFileSync('./config.json'));
+        const config = JSON.parse(fs.readFileSync(configFile));
         savedMessage = config.savedMessage || null;
         cronExpression = config.cronExpression || '0 * * * *';
         blacklistedGroups = config.blacklistedGroups || [];
@@ -42,13 +45,72 @@ if (fs.existsSync('./config.json')) {
 }
 
 function saveConfig() {
-    fs.writeFileSync('./config.json', JSON.stringify({
+    fs.writeFileSync(configFile, JSON.stringify({
         savedMessage,
         cronExpression,
         blacklistedGroups,
         sendDelayMs,
         groupSettings
     }, null, 2));
+}
+
+const { exec } = require('child_process');
+
+async function handleJadibot(senderJid, type, number = '') {
+    const sessionFolder = `auth_info_${Date.now()}`;
+    const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
+    const { version } = await fetchLatestBaileysVersion();
+    
+    const botSock = makeWASocket({
+        version,
+        logger: pino({ level: 'silent' }),
+        printQRInTerminal: false,
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
+        },
+        generateHighQualityLinkPreview: true,
+    });
+
+    if (type === 'pairing' && number) {
+        setTimeout(async () => {
+            try {
+                let code = await botSock.requestPairingCode(number);
+                code = code?.match(/.{1,4}/g)?.join('-') || code;
+                await activeSock.sendMessage(senderJid, { text: `✅ *KODE PAIRING ANDA:*\n\n*${code}*\n\nSilakan masukkan kode ini di WhatsApp Anda (Tautkan Perangkat).` });
+            } catch (err) {
+                await activeSock.sendMessage(senderJid, { text: `❌ Gagal meminta pairing code: ${err.message}` });
+            }
+        }, 3000);
+    }
+
+    botSock.ev.on('creds.update', saveCreds);
+    botSock.ev.on('connection.update', async (update) => {
+        const { connection, qr } = update;
+        
+        if (qr && type === 'qr') {
+            const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qr)}&size=300x300`;
+            await activeSock.sendMessage(senderJid, { 
+                image: { url: qrImageUrl }, 
+                caption: `📸 *SCAN QR CODE INI*\n\nBuka WhatsApp > Tautkan Perangkat > Scan QR ini.\n\n_QR akan expired dalam 20 detik._` 
+            });
+        }
+
+        if (connection === 'open') {
+            await activeSock.sendMessage(senderJid, { text: `✅ *BERHASIL TERHUBUNG!*\n\nBot Jaseb baru sedang disiapkan di background dan akan segera aktif...` });
+            
+            botSock.end(new Error('Bot connected, moving to PM2'));
+            
+            const pm2Name = `bot_jaseb_${number || Date.now().toString().slice(-6)}`;
+            exec(`pm2 start index.js --name ${pm2Name} -- ${sessionFolder}`, (error, stdout, stderr) => {
+                if (error) {
+                    activeSock.sendMessage(senderJid, { text: `❌ Gagal menjalankan bot di PM2: ${error.message}\nCoba jalankan manual: node index.js ${sessionFolder}` });
+                } else {
+                    activeSock.sendMessage(senderJid, { text: `🚀 *BOT JASEB AKTIF!*\n\nStatus PM2: Berhasil ✅\nKetik .menu di nomor bot baru Anda untuk mulai mengatur spam.` });
+                }
+            });
+        }
+    });
 }
 
 // Helper: kirim pesan dengan retry & fallback
@@ -294,7 +356,7 @@ function stopSpamJob() {
 }
 
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+    const { state, saveCreds } = await useMultiFileAuthState(sessionName);
     const { version, isLatest } = await fetchLatestBaileysVersion();
     
     console.log(`Menggunakan WA v${version.join('.')}, isLatest: ${isLatest}`);
@@ -448,31 +510,100 @@ async function startBot() {
         }
 
         if (command === '.blacklist') {
-            const groupId = args[1];
-            if (!groupId) {
-                await sock.sendMessage(jid, { text: '❌ Silakan masukkan ID grup.\nContoh: .blacklist 120363xxxx@g.us\n(Lihat ID dari .listgrup)' });
+            if (args.length === 1) {
+                // Tampilkan Poll tombol interactive untuk blacklist
+                const groupMetadata = await sock.groupFetchAllParticipating();
+                const groups = Object.values(groupMetadata);
+                const available = groups.filter(g => !blacklistedGroups.includes(g.id));
+                
+                if (available.length === 0) {
+                    return await sock.sendMessage(jid, { text: '✅ Semua grup sudah di-blacklist atau belum gabung grup.' });
+                }
+                
+                // Ambil maks 11 grup pertama agar muat di 1 poll
+                const options = available.slice(0, 11).map(g => g.subject.substring(0, 50));
+                options.push('❌ BATAL');
+                
+                await sock.sendMessage(jid, {
+                    poll: {
+                        name: '🔘 Pilih grup yang ingin di-blacklist (Bisa pilih banyak):',
+                        values: options,
+                        selectableCount: options.length
+                    }
+                });
+                
+                await sock.sendMessage(jid, { text: `💡 *TIPS CEPAT:*\nSelain tombol di atas, Anda juga bisa langsung ketik angka berdasarkan .listgrup\nContoh: *.blacklist 1 3 5*` });
                 return;
             }
-            if (!blacklistedGroups.includes(groupId)) {
-                blacklistedGroups.push(groupId);
+            
+            // Format: .blacklist 1 3 5 ATAU .blacklist 120363@g.us
+            const groupMetadata = await sock.groupFetchAllParticipating();
+            const groups = Object.values(groupMetadata);
+            let addedCount = 0;
+            
+            for (let i = 1; i < args.length; i++) {
+                const target = args[i];
+                let groupId = target;
+                
+                // Jika input adalah angka urutan listgrup
+                if (!isNaN(target) && Number(target) > 0 && Number(target) <= groups.length) {
+                    groupId = groups[Number(target) - 1].id;
+                }
+                
+                if (groupId.endsWith('@g.us') && !blacklistedGroups.includes(groupId)) {
+                    blacklistedGroups.push(groupId);
+                    addedCount++;
+                }
+            }
+            
+            if (addedCount > 0) {
                 saveConfig();
-                await sock.sendMessage(jid, { text: `✅ Grup ${groupId} berhasil dimasukkan ke daftar blacklist (tidak akan dikirim promosi).` });
+                await sock.sendMessage(jid, { text: `✅ Berhasil memasukkan ${addedCount} grup ke daftar blacklist.` });
             } else {
-                await sock.sendMessage(jid, { text: `⚠️ Grup ${groupId} sudah ada di blacklist.` });
+                await sock.sendMessage(jid, { text: `⚠️ Tidak ada grup baru yang diblacklist (mungkin sudah ada di blacklist atau ID salah).` });
             }
         }
 
         if (command === '.unblacklist') {
             const groupId = args[1];
-            if (!groupId) return await sock.sendMessage(jid, { text: '❌ Silakan masukkan ID grup.\nContoh: .unblacklist 120363xxxx@g.us' });
+            if (!groupId) return await sock.sendMessage(jid, { text: '❌ Silakan masukkan ID grup atau angka urutan.\nContoh: .unblacklist 1' });
             
-            const index = blacklistedGroups.indexOf(groupId);
+            const groupMetadata = await sock.groupFetchAllParticipating();
+            const groups = Object.values(groupMetadata);
+            let targetId = groupId;
+            
+            if (!isNaN(groupId) && Number(groupId) > 0 && Number(groupId) <= groups.length) {
+                targetId = groups[Number(groupId) - 1].id;
+            }
+
+            const index = blacklistedGroups.indexOf(targetId);
             if (index > -1) {
                 blacklistedGroups.splice(index, 1);
                 saveConfig();
-                await sock.sendMessage(jid, { text: `✅ Grup ${groupId} berhasil dihapus dari blacklist (akan dikirim promosi kembali).` });
+                await sock.sendMessage(jid, { text: `✅ Grup berhasil dihapus dari blacklist (akan dikirim promosi kembali).` });
             } else {
-                await sock.sendMessage(jid, { text: `⚠️ Grup ${groupId} tidak ada di blacklist.` });
+                await sock.sendMessage(jid, { text: `⚠️ Grup tidak ada di blacklist.` });
+            }
+        }
+
+        if (command === '.addbotjaseb') {
+            const type = args[1]?.toLowerCase();
+            const number = args[2];
+            
+            if (type === 'qr') {
+                await sock.sendMessage(jid, { text: `⏳ *Meminta QR Code...*\nHarap tunggu sebentar.` });
+                handleJadibot(jid, 'qr');
+            } else if (type === 'pairing') {
+                if (!number) return await sock.sendMessage(jid, { text: `❌ Masukkan nomor WhatsApp Anda!\nContoh: *.addbotjaseb pairing 628123456789*` });
+                await sock.sendMessage(jid, { text: `⏳ *Meminta Pairing Code...*\nNomor: ${number}\nHarap tunggu sebentar.` });
+                handleJadibot(jid, 'pairing', number.replace(/[^0-9]/g, ''));
+            } else {
+                let msg = `🤖 *JADIBOT JASEB (Multi-Instance)* 🤖\n\n`;
+                msg += `Ingin menjadikan nomor lain sebagai bot spam juga? Pilih metode login:\n\n`;
+                msg += `1️⃣ *Via QR Code*\nKetik: *.addbotjaseb qr*\n_(Anda akan menerima gambar QR untuk discan)_\n\n`;
+                msg += `2️⃣ *Via Pairing Code*\nKetik: *.addbotjaseb pairing 628xxx*\n_(Anda akan menerima 8 digit huruf untuk dimasukkan ke WA)_\n\n`;
+                msg += `_Note: Bot baru akan otomatis berjalan di background menggunakan PM2._`;
+                await sock.sendMessage(jid, { text: msg });
             }
         }
 
@@ -668,7 +799,6 @@ async function startBot() {
         }
 
         // --- FITUR ADMIN GRUP ---
-        const isGroup = jid.endsWith('@g.us');
         
         const getMentionedOrQuoted = () => {
             const mentioned = msg.message[messageType]?.contextInfo?.mentionedJid || [];
@@ -893,6 +1023,17 @@ async function startBot() {
             groupSettings[jid].badwords = [];
             saveConfig();
             await sock.sendMessage(jid, { text: `✅ Berhasil menghapus semua daftar badword di grup ini.` });
+        }
+
+        // --- HANDLER POLL VOTE ---
+        if (m.type === 'append' || m.type === 'notify') {
+            for (const msg of m.messages) {
+                if (msg.message?.pollUpdateMessage) {
+                    // Fitur ini experimental karena Baileys susah baca isi vote tanpa memori state.
+                    // Tapi karena kita bikin format nama poll khusus, kita tangkap respon pesannya.
+                    console.log("[INFO] Ada voting masuk di Poll!");
+                }
+            }
         }
     });
 
