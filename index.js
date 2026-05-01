@@ -197,6 +197,8 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                     await activeSock.sendMessage(groupId, { text: clonedMsg.conversation });
                 } else if (clonedMsg.extendedTextMessage) {
                     await activeSock.sendMessage(groupId, { text: clonedMsg.extendedTextMessage.text });
+                } else if (clonedMsg.contactMessage) {
+                    await activeSock.sendMessage(groupId, { contacts: { displayName: clonedMsg.contactMessage.displayName, contacts: [{ vcard: clonedMsg.contactMessage.vcard }] } });
                 } else if (clonedMsg.imageMessage) {
                     const img = clonedMsg.imageMessage;
                     await activeSock.sendMessage(groupId, {
@@ -790,6 +792,40 @@ async function startBot() {
             }
         }
 
+        if (command === '.addvcard') {
+            const params = text.substring(9).trim().split('|');
+            if (params.length < 2) {
+                return await sock.sendMessage(jid, { text: '❌ Format salah. Contoh:\n*.addvcard Admin Jaseb|628123456789*' });
+            }
+            const nama = params[0].trim();
+            const nomor = params[1].replace(/[^0-9]/g, '');
+            
+            const vcard = 'BEGIN:VCARD\n'
+                + 'VERSION:3.0\n'
+                + `FN:${nama}\n`
+                + `TEL;type=CELL;type=VOICE;waid=${nomor}:+${nomor}\n`
+                + 'END:VCARD';
+                
+            const contactMsg = {
+                contactMessage: {
+                    displayName: nama,
+                    vcard: vcard
+                }
+            };
+            
+            const newMsg = {
+                key: { remoteJid: jid, fromMe: true, id: activeSock.generateMessageTag(), participant: jid },
+                message: contactMsg
+            };
+            
+            savedMessages.push(newMsg);
+            if (!savedMessage) savedMessage = newMsg;
+            saveConfig();
+            
+            await sock.sendMessage(jid, { text: `✅ Kartu Kontak (VCard) berhasil ditambahkan ke rotasi promosi!\nNama: ${nama}\nNomor: ${nomor}` });
+            await sock.sendMessage(jid, { contacts: { displayName: nama, contacts: [{ vcard }] } }); // Kasih preview
+        }
+
         if (command === '.setwaktu') {
             const angka = parseInt(args[1]);
             const tipe = args[2] ? args[2].toLowerCase() : '';
@@ -865,6 +901,7 @@ async function startBot() {
             `.listgrup\n` +
             `.setpesan\n` +
             `.addpesan\n` +
+            `.addvcard <nama>|<nomor>\n` +
             `.setwaktu <angka> <menit/jam>\n` +
             `.setjeda <angka> <detik>\n` +
             `.sethidetag <on/off>\n` +
