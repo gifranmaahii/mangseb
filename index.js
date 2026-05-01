@@ -405,20 +405,7 @@ async function startBot() {
             const messageType = getContentType(msg.message);
             
             // --- HANDLING POLL VOTE (KLIK POLLING) ---
-            if (messageType === 'pollUpdateMessage') {
-                const pollUpdate = msg.message.pollUpdateMessage;
-                // Kita hanya proses vote jika dari diri sendiri (untuk self-bot)
-                if (!fromMe) return;
-
-                // Ambil data vote (sangat disederhanakan untuk stabilitas)
-                // Di bot yang lebih kompleks kita butuh decrypter, tapi di sini kita pakai 
-                // logika: jika ada vote masuk, kita kirim .menu teks saja sebagai panduan
-                // ATAU kita bisa berasumsi vote terakhir adalah perintah.
-                
-                // Namun untuk reliabilitas 100% di semua akun, kita sarankan user
-                // tetap klik teks/ketik manual jika Polling gagal trigger logic.
-                return;
-            }
+            // Kita hapus karena mengganggu user dan sulit di-decrypt di self-bot
 
             // Ambil teks dari berbagai tipe pesan
             let text = msg.message.conversation || 
@@ -428,6 +415,19 @@ async function startBot() {
                        "";
 
             if (!fromMe) return; // HANYA PROSES COMMAND JIKA DARI DIRI SENDIRI (Ngobrol sendiri)
+
+            // --- HANDLING INPUT ANGKA (MENU) ---
+            if (!text.startsWith('.')) {
+                if (text === '1') text = '.startspam';
+                else if (text === '2') text = '.stopspam';
+                else if (text === '3') text = '.cekconfig';
+                else if (text === '4') text = '.listgrup';
+                else if (text === '5') text = '.setpesan';
+                else if (text === '6') text = '.addbotjaseb';
+                else if (text === '7') text = '.blacklist';
+                else if (text === '8') text = '.unblacklist';
+                else if (text === '9') text = '.menu';
+            }
 
             if (text) {
                 console.log(`[INFO] Pesan masuk (fromMe: ${fromMe}): ${text}`);
@@ -674,31 +674,19 @@ async function startBot() {
         
         if (command === '.menu') {
             const menuText = `*🤖 MENU UTAMA BOT SPAM 🤖*\n\n` +
-            `_WhatsApp Anda memblokir fitur tombol. Silakan gunakan perintah teks di bawah (Klik teks biru untuk copy/ketik):_\n\n` +
-            `🚀 *.startspam* : Mulai pengiriman otomatis\n` +
-            `🛑 *.stopspam* : Berhenti pengiriman\n` +
-            `📊 *.cekconfig* : Cek pengaturan saat ini\n` +
-            `📋 *.listgrup* : Daftar semua grup\n` +
-            `🤖 *.addbotjaseb* : Tambah bot baru\n` +
-            `🚫 *.blacklist* : Pilih grup untuk di-skip\n` +
-            `🔓 *.unblacklist* : Aktifkan grup kembali\n\n` +
-            `_Tips: Anda juga bisa memilih lewat Polling di bawah jika muncul._`;
+            `_Silakan ketik angka di bawah untuk memilih perintah:_\n\n` +
+            `1️⃣ *Ketik 1* : Mulai Spam 🚀\n` +
+            `2️⃣ *Ketik 2* : Stop Spam 🛑\n` +
+            `3️⃣ *Ketik 3* : Cek Config 📊\n` +
+            `4️⃣ *Ketik 4* : Daftar Grup 📋\n` +
+            `5️⃣ *Ketik 5* : Set Pesan Promo 📝\n` +
+            `6️⃣ *Ketik 6* : Tambah Bot Baru 🤖\n` +
+            `7️⃣ *Ketik 7* : Menu Blacklist 🚫\n` +
+            `8️⃣ *Ketik 8* : Menu Un-blacklist 🔓\n` +
+            `9️⃣ *Ketik 9* : Tampilkan Menu Ini Lagi 🔄\n\n` +
+            `_Tips: Anda cukup ketik angkanya saja (misal ketik "1") untuk memulai._`;
 
-            await sock.sendMessage(jid, {
-                poll: {
-                    name: menuText,
-                    values: [
-                        '.startspam',
-                        '.stopspam',
-                        '.cekconfig',
-                        '.listgrup',
-                        '.addbotjaseb',
-                        '.blacklist',
-                        '.unblacklist'
-                    ],
-                    selectableCount: 1
-                }
-            }, { quoted: m.messages[0] });
+            await sock.sendMessage(jid, { text: menuText }, { quoted: m.messages[0] });
         }
 
         if (command === '.teskirim') {
