@@ -678,21 +678,76 @@ async function startBot() {
             `4️⃣ *.cekconfig* : Cek konfigurasi\n` +
             `5️⃣ *.setpesan* : Atur pesan promo\n` +
             `6️⃣ *.addbotjaseb* : Tambah bot baru\n\n` +
-            `_Gunakan tombol di bawah jika muncul, atau ketik perintah di atas._`;
-            
-            const templateButtons = [
-                { index: 1, quickReplyButton: { displayText: '🚀 START SPAM', id: '.startspam' } },
-                { index: 2, quickReplyButton: { displayText: '📊 CEK STATUS', id: '.cekconfig' } },
-                { index: 3, quickReplyButton: { displayText: '📋 LIST GRUP', id: '.listgrup' } },
-                { index: 4, quickReplyButton: { displayText: '🤖 TAMBAH BOT', id: '.addbotjaseb' } },
+            `_Jika tombol tidak muncul, silakan ketik perintah di atas._`;
+
+            const buttons = [
+                {
+                    name: "single_select",
+                    buttonParamsJson: JSON.stringify({
+                        title: "KLIK UNTUK PILIH 📂",
+                        sections: [
+                            {
+                                title: "MENU UTAMA",
+                                rows: [
+                                    { title: "Daftar Grup", description: "Cek grup & blacklist", rowId: ".listgrup" },
+                                    { title: "Cek Config", description: "Cek setting bot", rowId: ".cekconfig" }
+                                ]
+                            },
+                            {
+                                title: "KONTROL SPAM",
+                                rows: [
+                                    { title: "Mulai Spam 🚀", rowId: ".startspam" },
+                                    { title: "Stop Spam 🛑", rowId: ".stopspam" }
+                                ]
+                            }
+                        ]
+                    })
+                },
+                {
+                    name: "quick_reply",
+                    buttonParamsJson: JSON.stringify({
+                        display_text: "CEK CONFIG 📊",
+                        id: ".cekconfig"
+                    })
+                }
             ];
 
-            await sock.sendMessage(jid, {
-                text: menuText,
-                footer: "Premium Bot Spam v2.2",
-                templateButtons: templateButtons,
-                viewOnce: true
-            }, { quoted: m.messages[0] });
+            const msg = generateWAMessageFromContent(jid, {
+                viewOnceMessage: {
+                    message: {
+                        messageContextInfo: {
+                            deviceListMetadata: {},
+                            deviceListMetadataVersion: 2
+                        },
+                        interactiveMessage: proto.Message.InteractiveMessage.create({
+                            body: proto.Message.InteractiveMessage.Body.create({
+                                text: menuText
+                            }),
+                            footer: proto.Message.InteractiveMessage.Footer.create({
+                                text: "Premium Bot Spam v3.0"
+                            }),
+                            header: proto.Message.InteractiveMessage.Header.create({
+                                title: "🤖 *BOT SPAM JASEB*",
+                                hasMediaAttachment: true,
+                                imageMessage: (await sock.sendMessage(jid, { 
+                                    image: { url: 'https://telegra.ph/file/0a02a7b8e19c017d2a933.jpg' },
+                                    caption: 'Menu Header'
+                                }, { messageId: sock.generateMessageTag() })).message.imageMessage
+                            }),
+                            nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+                                buttons: buttons
+                            }),
+                            contextInfo: {
+                                forwardingScore: 999,
+                                isForwarded: true,
+                                mentionedJid: [sock.user.id]
+                            }
+                        })
+                    }
+                }
+            }, { userJid: sock.user.id, quoted: m.messages[0] });
+
+            await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
         }
 
         if (command === '.teskirim') {
