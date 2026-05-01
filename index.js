@@ -28,6 +28,7 @@ let sendDelayMs = 60000; // Default 1 menit (60000 ms)
 let sleepTimeStart = -1; // -1 berarti dimatikan (format 0-23)
 let sleepTimeEnd = -1;
 let autoDeleteMs = 0; // 0 berarti tidak ditarik
+let useHidetag = false; // Flag hidetag
 let lastNonCommandMessage = null;
 let activeSock = null; // Socket global, selalu di-update saat reconnect
 let spamOwnerJid = null; // JID owner yang start spam
@@ -45,6 +46,7 @@ if (fs.existsSync(configFile)) {
         sleepTimeStart = config.sleepTimeStart !== undefined ? config.sleepTimeStart : -1;
         sleepTimeEnd = config.sleepTimeEnd !== undefined ? config.sleepTimeEnd : -1;
         autoDeleteMs = config.autoDeleteMs || 0;
+        useHidetag = config.useHidetag || false;
     } catch (e) {
         console.error('Error loading config:', e);
     }
@@ -58,7 +60,8 @@ function saveConfig() {
         sendDelayMs,
         sleepTimeStart,
         sleepTimeEnd,
-        autoDeleteMs
+        autoDeleteMs,
+        useHidetag
     }, null, 2));
 }
 
@@ -132,7 +135,7 @@ function processSpinText(text) {
 }
 
 // Helper: kirim pesan dengan retry & fallback
-async function sendWithRetry(groupId, message, maxRetries = 3) {
+async function sendWithRetry(groupId, message, participants = null, maxRetries = 3) {
     if (!activeSock) return false;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
@@ -159,6 +162,27 @@ async function sendWithRetry(groupId, message, maxRetries = 3) {
                 clonedMsg[contentType].text = processSpinText(clonedMsg[contentType].text);
             } else if (clonedMsg[contentType]?.caption) {
                 clonedMsg[contentType].caption = processSpinText(clonedMsg[contentType].caption);
+            }
+
+            // Proses Hidetag
+            if (useHidetag && participants && participants.length > 0) {
+                const jids = participants.map(p => p.id);
+                if (clonedMsg.conversation) {
+                    clonedMsg.extendedTextMessage = {
+                        text: clonedMsg.conversation,
+                        contextInfo: { mentionedJid: jids }
+                    };
+                    delete clonedMsg.conversation;
+                } else if (clonedMsg.extendedTextMessage) {
+                    clonedMsg.extendedTextMessage.contextInfo = clonedMsg.extendedTextMessage.contextInfo || {};
+                    clonedMsg.extendedTextMessage.contextInfo.mentionedJid = jids;
+                } else if (clonedMsg.imageMessage) {
+                    clonedMsg.imageMessage.contextInfo = clonedMsg.imageMessage.contextInfo || {};
+                    clonedMsg.imageMessage.contextInfo.mentionedJid = jids;
+                } else if (clonedMsg.videoMessage) {
+                    clonedMsg.videoMessage.contextInfo = clonedMsg.videoMessage.contextInfo || {};
+                    clonedMsg.videoMessage.contextInfo.mentionedJid = jids;
+                }
             }
 
             // Attempt 1-2: pakai relayMessage (menjaga metadata saluran)
@@ -332,7 +356,7 @@ async function runSpamCycle() {
                 }
 
                 console.log(`[SPAM] [${i+1}/${groups.length}] Mengirim ke: ${group.subject}...`);
-                const sentMsgId = await sendWithRetry(group.id, savedMessage.message);
+                const sentMsgId = await sendWithRetry(group.id, savedMessage.message, group.participants);
                 
                 if (sentMsgId) {
                     successCount++;
@@ -694,6 +718,21 @@ async function startBot() {
             await sock.sendMessage(jid, { text: `✅ Jam Tidur diaktifkan!\nBot akan otomatis berhenti ngirim promosi pada jam *${start}:00* sampai *${end}:00*.` });
         }
 
+        if (command === '.sethidetag') {
+            const opt = args[1] ? args[1].toLowerCase() : '';
+            if (opt === 'on') {
+                useHidetag = true;
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ Fitur Hidetag diaktifkan!\nBot akan me-mention seluruh anggota grup secara tersembunyi.` });
+            } else if (opt === 'off') {
+                useHidetag = false;
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ Fitur Hidetag dimatikan.` });
+            } else {
+                await sock.sendMessage(jid, { text: `❌ Format salah.\nGunakan: .sethidetag on\nAtau: .sethidetag off` });
+            }
+        }
+
         if (command === '.setpesan') {
             const contextInfo = msg.message[messageType]?.contextInfo;
             if (contextInfo && contextInfo.quotedMessage) {
@@ -778,6 +817,7 @@ async function startBot() {
             statusText += `Status Spam: ${isSpamming ? '🟢 BERJALAN' : '🔴 BERHENTI'}\n`;
             statusText += `Jadwal (Cron): ${cronExpression}\n`;
             statusText += `Jeda Antar Grup: ${sendDelayMs / 1000} detik\n`;
+            statusText += `Hidetag (Mention All): ${useHidetag ? '✅ ON' : '❌ OFF'}\n`;
             statusText += `Jam Tidur (Sleep): ${sleepTimeStart !== -1 ? `${sleepTimeStart}:00 - ${sleepTimeEnd}:00` : '❌ OFF (24 Jam)'}\n`;
             statusText += `Auto-Tarik Pesan: ${autoDeleteMs > 0 ? `${autoDeleteMs / 1000} detik` : '❌ OFF'}\n`;
             statusText += `Grup Blacklist: ${blacklistedGroups.length} grup\n`;
@@ -792,6 +832,7 @@ async function startBot() {
             `.setpesan\n` +
             `.setwaktu <angka> <menit/jam>\n` +
             `.setjeda <angka> <detik>\n` +
+            `.sethidetag <on/off>\n` +
             `.setautodelete <angka> <detik/menit> | off\n` +
             `.setsleep <jamMulai> <jamSelesai> | off\n` +
             `.blacklist\n` +
