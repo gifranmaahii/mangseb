@@ -231,7 +231,7 @@ async function runSpamCycle() {
             try {
                 if (spamOwnerJid) {
                     await activeSock.sendMessage(spamOwnerJid, { 
-                        text: `🔄 *Siklus #${cycleNum} DIMULAI*\n\n📊 Total grup: ${groups.length}\n⏰ ${startTime.toLocaleString('id-ID')}\n\n_Mengirim ke semua grup..._` 
+                        text: `🔄 *Siklus #${cycleNum} DIMULAI*\n\n📊 Memindai ${groups.length} grup (Grup Blacklist/Admin-Only akan otomatis dilewati).\n⏰ ${startTime.toLocaleString('id-ID')}\n\n_Mengirim promosi..._` 
                     });
                 }
             } catch(e) {
