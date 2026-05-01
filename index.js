@@ -168,12 +168,7 @@ async function sendWithRetry(groupId, message, maxRetries = 3) {
     return false; // Semua retry gagal
 }
 
-function startSpamJob() {
-    if (spamJob) spamJob.stop();
-    isSpamming = true;
-    spamCycleCount = 0;
-    
-    spamJob = cron.schedule(cronExpression, async () => {
+async function runSpamCycle() {
         // Guard: jika sedang dalam proses kirim sebelumnya, skip
         if (spamJobRunning) {
             console.log('[SPAM] Siklus sebelumnya masih berjalan, melewati siklus ini.');
@@ -339,7 +334,18 @@ function startSpamJob() {
         } finally {
             spamJobRunning = false; // SELALU reset flag
         }
-    });
+}
+
+function startSpamJob() {
+    if (spamJob) spamJob.stop();
+    isSpamming = true;
+    spamCycleCount = 0;
+    
+    // Langsung eksekusi 1 kali saat start
+    runSpamCycle();
+
+    // Jadwalkan untuk eksekusi selanjutnya
+    spamJob = cron.schedule(cronExpression, runSpamCycle);
     
     spamJob.start();
 }
