@@ -25,6 +25,9 @@ let cronExpression = '0 * * * *'; // Default setiap jam
 let isSpamming = false;
 let blacklistedGroups = [];
 let sendDelayMs = 60000; // Default 1 menit (60000 ms)
+let sleepTimeStart = -1; // -1 berarti dimatikan (format 0-23)
+let sleepTimeEnd = -1;
+let autoDeleteMs = 0; // 0 berarti tidak ditarik
 let lastNonCommandMessage = null;
 let activeSock = null; // Socket global, selalu di-update saat reconnect
 let spamOwnerJid = null; // JID owner yang start spam
@@ -39,6 +42,9 @@ if (fs.existsSync(configFile)) {
         cronExpression = config.cronExpression || '0 * * * *';
         blacklistedGroups = config.blacklistedGroups || [];
         sendDelayMs = config.sendDelayMs || 60000;
+        sleepTimeStart = config.sleepTimeStart !== undefined ? config.sleepTimeStart : -1;
+        sleepTimeEnd = config.sleepTimeEnd !== undefined ? config.sleepTimeEnd : -1;
+        autoDeleteMs = config.autoDeleteMs || 0;
     } catch (e) {
         console.error('Error loading config:', e);
     }
@@ -49,7 +55,10 @@ function saveConfig() {
         savedMessage,
         cronExpression,
         blacklistedGroups,
-        sendDelayMs
+        sendDelayMs,
+        sleepTimeStart,
+        sleepTimeEnd,
+        autoDeleteMs
     }, null, 2));
 }
 
@@ -112,6 +121,16 @@ async function handleJadibot(senderJid, type, number = '') {
     });
 }
 
+// Helper: proses spin text [A|B|C]
+function processSpinText(text) {
+    if (!text) return text;
+    return text.replace(/\[([^\]]+)\]/g, (match, contents) => {
+        const choices = contents.split('|');
+        const randomIndex = Math.floor(Math.random() * choices.length);
+        return choices[randomIndex];
+    });
+}
+
 // Helper: kirim pesan dengan retry & fallback
 async function sendWithRetry(groupId, message, maxRetries = 3) {
     if (!activeSock) return false;
@@ -126,25 +145,40 @@ async function sendWithRetry(groupId, message, maxRetries = 3) {
                 }
             }
 
+            let messageId = activeSock.generateMessageTag();
+            
+            // Proses Spin Text (Hanya untuk text)
+            let clonedMsg = JSON.parse(JSON.stringify(message));
+            const contentType = getContentType(clonedMsg);
+            
+            if (clonedMsg.conversation) {
+                clonedMsg.conversation = processSpinText(clonedMsg.conversation);
+            } else if (clonedMsg.extendedTextMessage?.text) {
+                clonedMsg.extendedTextMessage.text = processSpinText(clonedMsg.extendedTextMessage.text);
+            } else if (clonedMsg[contentType]?.text) {
+                clonedMsg[contentType].text = processSpinText(clonedMsg[contentType].text);
+            } else if (clonedMsg[contentType]?.caption) {
+                clonedMsg[contentType].caption = processSpinText(clonedMsg[contentType].caption);
+            }
+
             // Attempt 1-2: pakai relayMessage (menjaga metadata saluran)
             if (attempt <= 2) {
-                await activeSock.relayMessage(groupId, message, { messageId: activeSock.generateMessageTag() });
+                await activeSock.relayMessage(groupId, clonedMsg, { messageId: messageId });
             } else {
                 // Attempt 3: fallback pakai sendMessage (lebih reliable)
-                const contentType = getContentType(message);
-                if (message.conversation) {
-                    await activeSock.sendMessage(groupId, { text: message.conversation });
-                } else if (message.extendedTextMessage) {
-                    await activeSock.sendMessage(groupId, { text: message.extendedTextMessage.text });
-                } else if (message.imageMessage) {
-                    const img = message.imageMessage;
+                if (clonedMsg.conversation) {
+                    await activeSock.sendMessage(groupId, { text: clonedMsg.conversation });
+                } else if (clonedMsg.extendedTextMessage) {
+                    await activeSock.sendMessage(groupId, { text: clonedMsg.extendedTextMessage.text });
+                } else if (clonedMsg.imageMessage) {
+                    const img = clonedMsg.imageMessage;
                     await activeSock.sendMessage(groupId, {
                         image: { url: img.url },
                         caption: img.caption || '',
                         mimetype: img.mimetype
                     });
-                } else if (message.videoMessage) {
-                    const vid = message.videoMessage;
+                } else if (clonedMsg.videoMessage) {
+                    const vid = clonedMsg.videoMessage;
                     await activeSock.sendMessage(groupId, {
                         video: { url: vid.url },
                         caption: vid.caption || '',
@@ -152,10 +186,10 @@ async function sendWithRetry(groupId, message, maxRetries = 3) {
                     });
                 } else {
                     // Last resort: relay lagi
-                    await activeSock.relayMessage(groupId, message, { messageId: activeSock.generateMessageTag() });
+                    await activeSock.relayMessage(groupId, clonedMsg, { messageId: messageId });
                 }
             }
-            return true; // Berhasil
+            return messageId; // Berhasil, kembalikan ID pesan
         } catch (err) {
             console.error(`[RETRY] Attempt ${attempt}/${maxRetries} gagal untuk ${groupId}:`, err.message || err);
             if (attempt < maxRetries) {
@@ -165,7 +199,7 @@ async function sendWithRetry(groupId, message, maxRetries = 3) {
             }
         }
     }
-    return false; // Semua retry gagal
+    return null; // Semua retry gagal
 }
 
 async function runSpamCycle() {
@@ -199,6 +233,31 @@ async function runSpamCycle() {
                         if (spamOwnerJid) {
                             await activeSock.sendMessage(spamOwnerJid, { 
                                 text: `⚠️ *Siklus #${cycleNum} DILEWATI*\n\n❌ Koneksi WhatsApp terputus.\nBot akan mencoba lagi di jadwal berikutnya.\n\n⏰ ${startTime.toLocaleString('id-ID')}` 
+                            });
+                        }
+                    } catch(e) {}
+                    spamJobRunning = false;
+                    return;
+                }
+            }
+            
+            // Cek Jam Operasional (Sleep Time)
+            if (sleepTimeStart !== -1 && sleepTimeEnd !== -1) {
+                const currentHour = new Date().getHours();
+                let isSleeping = false;
+                if (sleepTimeStart < sleepTimeEnd) {
+                    if (currentHour >= sleepTimeStart && currentHour < sleepTimeEnd) isSleeping = true;
+                } else {
+                    // Melewati tengah malam
+                    if (currentHour >= sleepTimeStart || currentHour < sleepTimeEnd) isSleeping = true;
+                }
+                
+                if (isSleeping) {
+                    console.log(`[SPAM] Siklus dilewati karena sedang Jam Tidur (${sleepTimeStart}:00 - ${sleepTimeEnd}:00)`);
+                    try {
+                        if (spamOwnerJid) {
+                            await activeSock.sendMessage(spamOwnerJid, { 
+                                text: `💤 *Siklus #${cycleNum} DILEWATI*\n\nBot sedang dalam mode Jam Tidur (${sleepTimeStart}:00 - ${sleepTimeEnd}:00).\nBot akan diam sampai jam operasional tiba.\n\n⏰ ${startTime.toLocaleString('id-ID')}` 
                             });
                         }
                     } catch(e) {}
@@ -273,11 +332,24 @@ async function runSpamCycle() {
                 }
 
                 console.log(`[SPAM] [${i+1}/${groups.length}] Mengirim ke: ${group.subject}...`);
-                const success = await sendWithRetry(group.id, savedMessage.message);
+                const sentMsgId = await sendWithRetry(group.id, savedMessage.message);
                 
-                if (success) {
+                if (sentMsgId) {
                     successCount++;
                     console.log(`[SPAM] ✅ Berhasil kirim ke ${group.subject} (${successCount} berhasil)`);
+                    
+                    // Jadwalkan auto-delete jika diset
+                    if (autoDeleteMs > 0) {
+                        const targetGroupId = group.id; // Copy by value
+                        setTimeout(async () => {
+                            try {
+                                await activeSock.sendMessage(targetGroupId, { delete: { remoteJid: targetGroupId, fromMe: true, id: sentMsgId } });
+                                console.log(`[AUTO-DELETE] ✅ Berhasil menarik pesan di ${group.subject}`);
+                            } catch(e) {
+                                console.log(`[AUTO-DELETE] ❌ Gagal menarik pesan di ${group.subject}: ${e.message}`);
+                            }
+                        }, autoDeleteMs);
+                    }
                 } else {
                     failCount++;
                     failedGroups.push(group.subject);
@@ -581,6 +653,47 @@ async function startBot() {
             await sock.sendMessage(jid, { text: `✅ Jeda kirim antar grup berhasil diatur menjadi ${jedaInput} ${tipe} (${sendDelayMs} ms).` });
         }
 
+        if (command === '.setautodelete') {
+            const jedaInput = parseInt(args[1]);
+            const tipe = args[2] ? args[2].toLowerCase() : '';
+            if (args[1] === 'off') {
+                autoDeleteMs = 0;
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ Fitur Auto-Delete dimatikan. Pesan promosi tidak akan ditarik.` });
+                return;
+            }
+            if (isNaN(jedaInput) || (tipe !== 'detik' && tipe !== 'menit')) {
+                await sock.sendMessage(jid, { text: '❌ Format salah.\nContoh: .setautodelete 5 menit\nContoh: .setautodelete 30 detik\nUntuk mematikan: .setautodelete off' });
+                return;
+            }
+            
+            autoDeleteMs = tipe === 'menit' ? jedaInput * 60000 : jedaInput * 1000;
+            saveConfig();
+            await sock.sendMessage(jid, { text: `✅ Pesan promosi akan ditarik (Delete for Everyone) otomatis setelah ${jedaInput} ${tipe}.` });
+        }
+
+        if (command === '.setsleep') {
+            if (args[1] === 'off') {
+                sleepTimeStart = -1;
+                sleepTimeEnd = -1;
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ Jam Tidur dimatikan. Bot akan promosi 24 Jam Nonstop.` });
+                return;
+            }
+            const start = parseInt(args[1]);
+            const end = parseInt(args[2]);
+            
+            if (isNaN(start) || isNaN(end) || start < 0 || start > 23 || end < 0 || end > 23) {
+                await sock.sendMessage(jid, { text: '❌ Format salah.\nContoh (Bot diam jam 22 malam sampai 5 pagi): .setsleep 22 5\nUntuk mematikan: .setsleep off' });
+                return;
+            }
+            
+            sleepTimeStart = start;
+            sleepTimeEnd = end;
+            saveConfig();
+            await sock.sendMessage(jid, { text: `✅ Jam Tidur diaktifkan!\nBot akan otomatis berhenti ngirim promosi pada jam *${start}:00* sampai *${end}:00*.` });
+        }
+
         if (command === '.setpesan') {
             const contextInfo = msg.message[messageType]?.contextInfo;
             if (contextInfo && contextInfo.quotedMessage) {
@@ -665,6 +778,8 @@ async function startBot() {
             statusText += `Status Spam: ${isSpamming ? '🟢 BERJALAN' : '🔴 BERHENTI'}\n`;
             statusText += `Jadwal (Cron): ${cronExpression}\n`;
             statusText += `Jeda Antar Grup: ${sendDelayMs / 1000} detik\n`;
+            statusText += `Jam Tidur (Sleep): ${sleepTimeStart !== -1 ? `${sleepTimeStart}:00 - ${sleepTimeEnd}:00` : '❌ OFF (24 Jam)'}\n`;
+            statusText += `Auto-Tarik Pesan: ${autoDeleteMs > 0 ? `${autoDeleteMs / 1000} detik` : '❌ OFF'}\n`;
             statusText += `Grup Blacklist: ${blacklistedGroups.length} grup\n`;
             statusText += `Pesan Promosi: ${savedMessage ? '✅ Ada' : '❌ Belum di-set'}\n\n`;
             statusText += `Ketik .menu untuk melihat daftar perintah.`;
@@ -677,6 +792,8 @@ async function startBot() {
             `.setpesan\n` +
             `.setwaktu <angka> <menit/jam>\n` +
             `.setjeda <angka> <detik>\n` +
+            `.setautodelete <angka> <detik/menit> | off\n` +
+            `.setsleep <jamMulai> <jamSelesai> | off\n` +
             `.blacklist\n` +
             `.unblacklist\n` +
             `.startspam\n` +
