@@ -419,31 +419,32 @@ async function startBot() {
     });
 
     sock.ev.on('messages.upsert', async m => {
-        if (m.type !== 'notify') return;
-        const msg = m.messages[0];
-        if (!msg.message) return;
+        try {
+            if (m.type !== 'notify' && m.type !== 'append') return;
+            const msg = m.messages[0];
+            if (!msg.message) return;
 
-        const jid = msg.key.remoteJid;
-        const fromMe = msg.key.fromMe;
-        const messageType = getContentType(msg.message);
-        const isGroup = jid.endsWith('@g.us');
-        
-        let text = msg.message.conversation || 
-                   msg.message.extendedTextMessage?.text || 
-                   msg.message[messageType]?.text || 
-                   msg.message[messageType]?.caption || 
-                   "";
+            const jid = msg.key.remoteJid;
+            const fromMe = msg.key.fromMe;
+            const messageType = getContentType(msg.message);
+            
+            // Ambil teks dari berbagai tipe pesan
+            let text = msg.message.conversation || 
+                       msg.message.extendedTextMessage?.text || 
+                       msg.message[messageType]?.text || 
+                       msg.message[messageType]?.caption || 
+                       "";
 
-        if (!fromMe) return; // HANYA PROSES COMMAND JIKA DARI DIRI SENDIRI
+            if (!fromMe) return; // HANYA PROSES COMMAND JIKA DARI DIRI SENDIRI (Ngobrol sendiri)
 
-        if (text) {
-            console.log(`[INFO] Pesan dari Anda: ${text}`);
-        }
+            if (text) {
+                console.log(`[INFO] Pesan masuk (fromMe: ${fromMe}): ${text}`);
+            }
 
-        const isCommand = text.startsWith('.');
-        if (!isCommand) {
-            lastNonCommandMessage = msg;
-        }
+            const isCommand = text.startsWith('.');
+            if (!isCommand) {
+                lastNonCommandMessage = msg;
+            }
 
         const args = text.split(' ');
         const command = args[0].toLowerCase();
@@ -707,7 +708,10 @@ async function startBot() {
                 await sock.sendMessage(jid, { text: `❌ Gagal mengirim tes ke *${targetGroupName}*: ${err.message}` });
             }
         }
-    });
+    } catch (err) {
+        console.error('[ERROR] Terjadi kesalahan saat memproses pesan:', err);
+    }
+});
 
 
 }
