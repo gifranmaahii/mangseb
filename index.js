@@ -239,6 +239,12 @@ async function runSpamCycle() {
             }
 
             for (let i = 0; i < groups.length; i++) {
+                // Berhenti jika user memanggil .stopspam
+                if (!isSpamming) {
+                    console.log(`[SPAM] Dihentikan paksa oleh user. Membatalkan sisa pengiriman...`);
+                    break;
+                }
+
                 const group = groups[i];
                 const isAdminOnly = group.announce;
                 const isAnnounceGroup = group.isCommunityAnnounce;
