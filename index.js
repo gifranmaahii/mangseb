@@ -472,9 +472,13 @@ async function startBot() {
                 const msg = generateWAMessageFromContent(jid, {
                     viewOnceMessage: {
                         message: {
+                            messageContextInfo: {
+                                deviceListMetadata: {},
+                                deviceListMetadataVersion: 2
+                            },
                             interactiveMessage: proto.Message.InteractiveMessage.create({
                                 body: proto.Message.InteractiveMessage.Body.create({
-                                    text: "Silakan pilih grup yang ingin di-blacklist agar tidak dikirimi pesan promosi."
+                                    text: "Silakan pilih grup yang ingin di-blacklist agar tidak dikirimi pesan promosi.\n\n_Jika tombol tidak muncul, gunakan: .blacklist <id_grup>_"
                                 }),
                                 footer: proto.Message.InteractiveMessage.Footer.create({
                                     text: "Menu Blacklist"
@@ -485,11 +489,15 @@ async function startBot() {
                                 }),
                                 nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
                                     buttons: buttons
-                                })
+                                }),
+                                contextInfo: {
+                                    forwardingScore: 999,
+                                    isForwarded: true
+                                }
                             })
                         }
                     }
-                }, {});
+                }, { userJid: sock.user.id, quoted: m.messages[0] });
 
                 await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
                 return;
@@ -546,9 +554,13 @@ async function startBot() {
                 const msg = generateWAMessageFromContent(jid, {
                     viewOnceMessage: {
                         message: {
+                            messageContextInfo: {
+                                deviceListMetadata: {},
+                                deviceListMetadataVersion: 2
+                            },
                             interactiveMessage: proto.Message.InteractiveMessage.create({
                                 body: proto.Message.InteractiveMessage.Body.create({
-                                    text: "Silakan pilih grup yang ingin diaktifkan kembali."
+                                    text: "Silakan pilih grup yang ingin diaktifkan kembali.\n\n_Jika tombol tidak muncul, gunakan: .unblacklist <id_grup>_"
                                 }),
                                 footer: proto.Message.InteractiveMessage.Footer.create({
                                     text: "Menu Un-blacklist"
@@ -559,11 +571,15 @@ async function startBot() {
                                 }),
                                 nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
                                     buttons: buttons
-                                })
+                                }),
+                                contextInfo: {
+                                    forwardingScore: 999,
+                                    isForwarded: true
+                                }
                             })
                         }
                     }
-                }, {});
+                }, { userJid: sock.user.id, quoted: m.messages[0] });
 
                 await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
                 return;
