@@ -404,8 +404,8 @@ async function startBot() {
             const fromMe = msg.key.fromMe;
             const messageType = getContentType(msg.message);
             
-            // --- HANDLING POLL VOTE (KLIK POLLING) ---
-            // Kita hapus karena mengganggu user dan sulit di-decrypt di self-bot
+            // --- HANDLING POLL VOTE ---
+            // Removed as requested
 
             // Ambil teks dari berbagai tipe pesan
             let text = msg.message.conversation || 
@@ -415,19 +415,6 @@ async function startBot() {
                        "";
 
             if (!fromMe) return; // HANYA PROSES COMMAND JIKA DARI DIRI SENDIRI (Ngobrol sendiri)
-
-            // --- HANDLING INPUT ANGKA (MENU) ---
-            if (!text.startsWith('.')) {
-                if (text === '1') text = '.startspam';
-                else if (text === '2') text = '.stopspam';
-                else if (text === '3') text = '.cekconfig';
-                else if (text === '4') text = '.listgrup';
-                else if (text === '5') text = '.setpesan';
-                else if (text === '6') text = '.addbotjaseb';
-                else if (text === '7') text = '.blacklist';
-                else if (text === '8') text = '.unblacklist';
-                else if (text === '9') text = '.menu';
-            }
 
             if (text) {
                 console.log(`[INFO] Pesan masuk (fromMe: ${fromMe}): ${text}`);
@@ -673,20 +660,19 @@ async function startBot() {
         }
         
         if (command === '.menu') {
-            const menuText = `*🤖 MENU UTAMA BOT SPAM 🤖*\n\n` +
-            `_Silakan ketik angka di bawah untuk memilih perintah:_\n\n` +
-            `1️⃣ *Ketik 1* : Mulai Spam 🚀\n` +
-            `2️⃣ *Ketik 2* : Stop Spam 🛑\n` +
-            `3️⃣ *Ketik 3* : Cek Config 📊\n` +
-            `4️⃣ *Ketik 4* : Daftar Grup 📋\n` +
-            `5️⃣ *Ketik 5* : Set Pesan Promo 📝\n` +
-            `6️⃣ *Ketik 6* : Tambah Bot Baru 🤖\n` +
-            `7️⃣ *Ketik 7* : Menu Blacklist 🚫\n` +
-            `8️⃣ *Ketik 8* : Menu Un-blacklist 🔓\n` +
-            `9️⃣ *Ketik 9* : Tampilkan Menu Ini Lagi 🔄\n\n` +
-            `_Tips: Anda cukup ketik angkanya saja (misal ketik "1") untuk memulai._`;
+            const menuText = `*DAFTAR PERINTAH BOT*\n\n` +
+            `.listgrup\n` +
+            `.setpesan\n` +
+            `.setwaktu <angka> <menit/jam>\n` +
+            `.setjeda <angka> <detik>\n` +
+            `.blacklist\n` +
+            `.unblacklist\n` +
+            `.startspam\n` +
+            `.stopspam\n` +
+            `.cekconfig\n` +
+            `.addbotjaseb`;
 
-            await sock.sendMessage(jid, { text: menuText }, { quoted: m.messages[0] });
+            await sock.sendMessage(jid, { text: menuText });
         }
 
         if (command === '.teskirim') {
