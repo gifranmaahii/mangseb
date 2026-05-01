@@ -476,114 +476,84 @@ async function startBot() {
                     return await sock.sendMessage(jid, { text: '✅ Semua grup sudah di-blacklist atau belum gabung grup.' });
                 }
 
-                // Kirim List Message (Tombol Daftar)
-                const sections = [
-                    {
-                        title: 'Daftar Grup Anda',
-                        rows: available.slice(0, 50).map((g, i) => ({
-                            title: g.subject.substring(0, 24),
-                            description: `ID: ${g.id}`,
-                            rowId: `.blacklist ${g.id}`
-                        }))
+                // Gunakan Poll sebagai pengganti tombol (Karena tombol List/Button sudah diblokir WA untuk akun biasa)
+                const options = available.slice(0, 11).map(g => g.subject.substring(0, 50));
+                options.push('❌ BATAL');
+
+                await sock.sendMessage(jid, {
+                    poll: {
+                        name: '🚫 *PILIH GRUP UNTUK BLACKLIST*\n(Klik pada nama grup di bawah untuk mem-blacklist)',
+                        values: options,
+                        selectableCount: 1
                     }
-                ];
-
-                const listMessage = {
-                    text: "Pilih grup yang ingin Anda masukkan ke daftar Blacklist (Pesan promosi tidak akan dikirim ke grup yang di-blacklist).",
-                    footer: "Spam Bot Pro",
-                    title: "🚫 BLACKLIST GRUP",
-                    buttonText: "Pilih Grup",
-                    sections
-                };
-
-                await sock.sendMessage(jid, listMessage);
+                });
+                
+                await sock.sendMessage(jid, { text: `💡 *Info:* Silakan pilih nama grup pada Polling di atas. Pesan promosi tidak akan masuk ke grup yang dipilih.` });
                 return;
             }
-            
-            // Format: .blacklist 1 3 5 ATAU .blacklist 120363@g.us
+
+            // Manual handling for .blacklist <id> or <nomor>
             let addedCount = 0;
-            
             for (let i = 1; i < args.length; i++) {
                 const target = args[i];
                 let groupId = target;
-                
-                // Jika input adalah angka urutan listgrup
                 if (!isNaN(target) && Number(target) > 0 && Number(target) <= groups.length) {
                     groupId = groups[Number(target) - 1].id;
                 }
-                
                 if (groupId.endsWith('@g.us') && !blacklistedGroups.includes(groupId)) {
                     blacklistedGroups.push(groupId);
                     addedCount++;
                 }
             }
-            
             if (addedCount > 0) {
                 saveConfig();
-                await sock.sendMessage(jid, { text: `✅ Berhasil memasukkan ${addedCount} grup ke daftar blacklist.` });
+                await sock.sendMessage(jid, { text: `✅ Berhasil mem-blacklist ${addedCount} grup.` });
             } else {
-                await sock.sendMessage(jid, { text: `⚠️ Tidak ada grup baru yang diblacklist (mungkin sudah ada di blacklist atau ID salah).` });
+                await sock.sendMessage(jid, { text: `⚠️ Gagal/Sudah ada di blacklist.` });
             }
         }
 
         if (command === '.unblacklist') {
+            const groupMetadataList = await sock.groupFetchAllParticipating();
+            const groupsList = Object.values(groupMetadataList);
+            const blacklisted = groupsList.filter(g => blacklistedGroups.includes(g.id));
+
             if (args.length === 1) {
-                if (blacklistedGroups.length === 0) {
+                if (blacklisted.length === 0) {
                     return await sock.sendMessage(jid, { text: '⚠️ Tidak ada grup dalam daftar blacklist.' });
                 }
 
-                const groupMetadata = await sock.groupFetchAllParticipating();
-                const groups = Object.values(groupMetadata);
-                const blacklisted = groups.filter(g => blacklistedGroups.includes(g.id));
+                const options = blacklisted.slice(0, 11).map(g => g.subject.substring(0, 50));
+                options.push('❌ BATAL');
 
-                const sections = [
-                    {
-                        title: 'Grup Ter-blacklist',
-                        rows: blacklisted.map((g, i) => ({
-                            title: g.subject.substring(0, 24),
-                            description: `ID: ${g.id}`,
-                            rowId: `.unblacklist ${g.id}`
-                        }))
+                await sock.sendMessage(jid, {
+                    poll: {
+                        name: '🔓 *PILIH GRUP UNTUK UN-BLACKLIST*\n(Klik pada nama grup untuk mengaktifkan kembali)',
+                        values: options,
+                        selectableCount: 1
                     }
-                ];
-
-                const listMessage = {
-                    text: "Pilih grup yang ingin Anda keluarkan dari Blacklist (Pesan promosi akan dikirim kembali ke grup ini).",
-                    footer: "Spam Bot Pro",
-                    title: "🔓 UNBLACKLIST GRUP",
-                    buttonText: "Buka Daftar",
-                    sections
-                };
-
-                await sock.sendMessage(jid, listMessage);
+                });
                 return;
             }
 
-            // Manual handling for .unblacklist <id> or <nomor>
-            const groupMetadataList = await sock.groupFetchAllParticipating();
-            const groupsList = Object.values(groupMetadataList);
             let removedCount = 0;
-
             for (let i = 1; i < args.length; i++) {
                 const target = args[i];
                 let targetId = target;
-                
                 if (!isNaN(target) && Number(target) > 0 && Number(target) <= groupsList.length) {
                     targetId = groupsList[Number(target) - 1].id;
                 }
-
                 const index = blacklistedGroups.indexOf(targetId);
                 if (index > -1) {
                     blacklistedGroups.splice(index, 1);
                     removedCount++;
                 }
             }
-
             if (removedCount > 0) {
                 saveConfig();
                 await sock.sendMessage(jid, { text: `✅ Berhasil menghapus ${removedCount} grup dari blacklist.` });
             } else {
-                await sock.sendMessage(jid, { text: `⚠️ Tidak ada grup yang dihapus (ID tidak ditemukan atau tidak ada di blacklist).` });
+                await sock.sendMessage(jid, { text: `⚠️ Tidak ditemukan.` });
             }
         }
 
