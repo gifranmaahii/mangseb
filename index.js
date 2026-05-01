@@ -434,50 +434,6 @@ async function startBot() {
                    msg.message[messageType]?.caption || 
                    "";
 
-        // --- FITUR MODERASI GRUP (Anti-Link & Anti-Badword) ---
-        if (isGroup && !fromMe && text) {
-            const settings = groupSettings[jid] || {};
-            const sender = msg.key.participant;
-            const isLink = text.match(/chat\.whatsapp\.com\/[a-zA-Z0-9]/i) || text.match(/wa\.me\//i);
-            
-            // Cek jika pengirim adalah admin
-            let isAdmin = false;
-            try {
-                const groupMetadata = await sock.groupMetadata(jid);
-                const participant = groupMetadata.participants.find(p => p.id === sender);
-                isAdmin = participant ? participant.admin : false;
-            } catch (e) {}
-
-            if (!isAdmin) {
-                let isViolating = false;
-                let shouldKick = false;
-
-                // Anti Link
-                if (isLink && (settings.antilink || settings.antilinknokick)) {
-                    isViolating = true;
-                    if (settings.antilink) shouldKick = true;
-                }
-                
-                // Anti Badword
-                if (!isViolating && (settings.antibadword || settings.antibadwordnokick)) {
-                    const badwords = settings.badwords || [];
-                    const textLower = text.toLowerCase();
-                    const isBad = badwords.some(word => textLower.includes(word.toLowerCase()));
-                    if (isBad) {
-                        isViolating = true;
-                        if (settings.antibadword) shouldKick = true;
-                    }
-                }
-
-                if (isViolating) {
-                    await sock.sendMessage(jid, { delete: msg.key }).catch(()=>{}); // Hapus pesan
-                    if (shouldKick) {
-                        await sock.groupParticipantsUpdate(jid, [sender], "remove").catch(()=>{});
-                    }
-                }
-            }
-        }
-
         if (!fromMe) return; // HANYA PROSES COMMAND JIKA DARI DIRI SENDIRI
 
         if (text) {
@@ -510,29 +466,9 @@ async function startBot() {
         }
 
         if (command === '.blacklist') {
-            if (args.length === 1) {
-                // Tampilkan Poll tombol interactive untuk blacklist
-                const groupMetadata = await sock.groupFetchAllParticipating();
-                const groups = Object.values(groupMetadata);
-                const available = groups.filter(g => !blacklistedGroups.includes(g.id));
-                
-                if (available.length === 0) {
-                    return await sock.sendMessage(jid, { text: '✅ Semua grup sudah di-blacklist atau belum gabung grup.' });
-                }
-                
-                // Ambil maks 11 grup pertama agar muat di 1 poll
-                const options = available.slice(0, 11).map(g => g.subject.substring(0, 50));
-                options.push('❌ BATAL');
-                
-                await sock.sendMessage(jid, {
-                    poll: {
-                        name: '🔘 Pilih grup yang ingin di-blacklist (Bisa pilih banyak):',
-                        values: options,
-                        selectableCount: options.length
-                    }
-                });
-                
-                await sock.sendMessage(jid, { text: `💡 *TIPS CEPAT:*\nSelain tombol di atas, Anda juga bisa langsung ketik angka berdasarkan .listgrup\nContoh: *.blacklist 1 3 5*` });
+            const groupId = args[1];
+            if (!groupId) {
+                await sock.sendMessage(jid, { text: '❌ Silakan masukkan ID grup atau angka urutan dari .listgrup.\nContoh: *.blacklist 1*\nContoh: *.blacklist 1 3 5*' });
                 return;
             }
             
@@ -718,39 +654,13 @@ async function startBot() {
             `2. *.setpesan* : Forward pesan dari saluran, lalu kirim .setpesan (jangan di-reply)\n` +
             `3. *.setwaktu <angka> <detik/menit/jam>* : Mengatur perulangan kirim semua. Contoh: *.setwaktu 30 menit*\n` +
             `4. *.setjeda <angka> <detik/menit>* : Mengatur jeda kirim antar grup. Contoh: *.setjeda 1 menit*\n` +
-            `5. *.blacklist <id_grup>* : Supaya grup tersebut tidak disebarkan promosi\n` +
-            `6. *.unblacklist <id_grup>* : Menghapus grup dari daftar blacklist\n` +
+            `5. *.blacklist <nomor/id>* : Supaya grup tersebut tidak disebarkan promosi\n` +
+            `6. *.unblacklist <nomor/id>* : Menghapus grup dari daftar blacklist\n` +
             `7. *.startspam* : Memulai proses pengiriman spam sesuai jadwal\n` +
             `8. *.stopspam* : Menghentikan proses spam\n` +
             `9. *.cekconfig* : Melihat konfigurasi lengkap\n` +
-            `10. *.teskirim* : Mengetes kirim ke 1 grup (Grup pertama)\n\n` +
-            `*Daftar Perintah Admin Grup:*\n` +
-            `11. *.kick* : Mengeluarkan member (tag/reply/nomor)\n` +
-            `12. *.add* : Menambahkan member (nomor)\n` +
-            `13. *.promote* : Menjadikan admin (tag/reply/nomor)\n` +
-            `14. *.demote* : Menurunkan admin (tag/reply/nomor)\n` +
-            `15. *.setnamegc* : Mengubah nama grup\n` +
-            `16. *.setdescgc* : Mengubah deskripsi grup\n` +
-            `17. *.setopen* : Membuka grup (member bisa chat)\n` +
-            `18. *.setclose* : Menutup grup (hanya admin)\n` +
-            `19. *.hidetag* : Tag semua member (sembunyi)\n` +
-            `20. *.tagall* : Tag semua member (kelihatan)\n` +
-            `21. *.leavegc* : Bot keluar dari grup\n` +
-            `22. *.linkgc* : Dapatkan link invite grup\n` +
-            `23. *.revokelink* : Reset link invite grup\n` +
-            `24. *.groupinfo* : Lihat info grup detail\n` +
-            `25. *.welcome* : Nyala/Matikan sapaan member baru\n` +
-            `26. *.setwelcome* : Atur teks pesan sapaan member baru\n` +
-            `27. *.left* : Nyala/Matikan sapaan member keluar\n` +
-            `28. *.setleft* : Atur teks pesan sapaan member keluar\n` +
-            `29. *.antilink* : Nyala/Matikan anti-link (hapus & kick)\n` +
-            `30. *.antilinknokick* : Nyala/Matikan anti-link (hanya hapus)\n` +
-            `31. *.antibadword* : Nyala/Matikan anti kata kasar (hapus & kick)\n` +
-            `32. *.antibadwordnokick* : Nyala/Matikan anti kata kasar (hanya hapus)\n` +
-            `33. *.addbadword* : Tambah kata kasar ke daftar grup ini\n` +
-            `34. *.delbadword* : Hapus kata kasar dari daftar grup ini\n` +
-            `35. *.listbadword* : Lihat daftar kata kasar grup ini\n` +
-            `36. *.resetbadword* : Hapus semua daftar kata kasar grup ini`;
+            `10. *.teskirim* : Mengetes kirim ke 1 grup (Grup pertama)\n` +
+            `11. *.addbotjaseb* : Menambahkan bot baru (Multi-Instance)`;
             
             await sock.sendMessage(jid, { text: menuText });
         }
@@ -795,244 +705,6 @@ async function startBot() {
             } catch (err) {
                 console.error(`[TES] Gagal kirim ke ${targetGroupName}:`, err);
                 await sock.sendMessage(jid, { text: `❌ Gagal mengirim tes ke *${targetGroupName}*: ${err.message}` });
-            }
-        }
-
-        // --- FITUR ADMIN GRUP ---
-        
-        const getMentionedOrQuoted = () => {
-            const mentioned = msg.message[messageType]?.contextInfo?.mentionedJid || [];
-            if (mentioned.length > 0) return mentioned;
-            const quoted = msg.message[messageType]?.contextInfo?.participant;
-            if (quoted) return [quoted];
-            const textNum = args[1] ? args[1].replace(/[^0-9]/g, '') + '@s.whatsapp.net' : null;
-            if (textNum && textNum !== '@s.whatsapp.net') return [textNum];
-            return [];
-        };
-
-        if (command === '.kick' && isGroup) {
-            const users = getMentionedOrQuoted();
-            if (users.length === 0) return await sock.sendMessage(jid, { text: '❌ Tag, reply, atau masukkan nomor target.' });
-            await sock.groupParticipantsUpdate(jid, users, "remove").catch(() => {});
-            await sock.sendMessage(jid, { text: `✅ Berhasil mengeluarkan target.` });
-        }
-
-        if (command === '.add' && isGroup) {
-            const users = getMentionedOrQuoted();
-            if (users.length === 0) return await sock.sendMessage(jid, { text: '❌ Masukkan nomor target.' });
-            await sock.groupParticipantsUpdate(jid, users, "add").catch(() => {});
-            await sock.sendMessage(jid, { text: `✅ Berhasil mengundang/menambahkan target.` });
-        }
-
-        if (command === '.promote' && isGroup) {
-            const users = getMentionedOrQuoted();
-            if (users.length === 0) return await sock.sendMessage(jid, { text: '❌ Tag, reply, atau masukkan nomor target.' });
-            await sock.groupParticipantsUpdate(jid, users, "promote").catch(() => {});
-            await sock.sendMessage(jid, { text: `✅ Berhasil menaikkan jabatan target menjadi admin.` });
-        }
-
-        if (command === '.demote' && isGroup) {
-            const users = getMentionedOrQuoted();
-            if (users.length === 0) return await sock.sendMessage(jid, { text: '❌ Tag, reply, atau masukkan nomor target.' });
-            await sock.groupParticipantsUpdate(jid, users, "demote").catch(() => {});
-            await sock.sendMessage(jid, { text: `✅ Berhasil menurunkan jabatan target dari admin.` });
-        }
-
-        if (command === '.setnamegc' && isGroup) {
-            const newName = args.slice(1).join(' ');
-            if (!newName) return await sock.sendMessage(jid, { text: '❌ Masukkan nama grup baru.' });
-            await sock.groupUpdateSubject(jid, newName).catch(() => {});
-            await sock.sendMessage(jid, { text: `✅ Berhasil mengubah nama grup.` });
-        }
-
-        if (command === '.setdescgc' && isGroup) {
-            const newDesc = args.slice(1).join(' ');
-            if (!newDesc) return await sock.sendMessage(jid, { text: '❌ Masukkan deskripsi grup baru.' });
-            await sock.groupUpdateDescription(jid, newDesc).catch(() => {});
-            await sock.sendMessage(jid, { text: `✅ Berhasil mengubah deskripsi grup.` });
-        }
-
-        if (command === '.setopen' && isGroup) {
-            await sock.groupSettingUpdate(jid, 'not_announcement').catch(() => {});
-            await sock.sendMessage(jid, { text: `✅ Grup telah dibuka, semua member dapat mengirim pesan.` });
-        }
-
-        if (command === '.setclose' && isGroup) {
-            await sock.groupSettingUpdate(jid, 'announcement').catch(() => {});
-            await sock.sendMessage(jid, { text: `✅ Grup telah ditutup, hanya admin yang dapat mengirim pesan.` });
-        }
-
-        if (command === '.hidetag' && isGroup) {
-            const textMsg = args.slice(1).join(' ');
-            const groupMetadata = await sock.groupMetadata(jid);
-            const participants = groupMetadata.participants.map(p => p.id);
-            await sock.sendMessage(jid, { text: textMsg || '📢 Perhatian', mentions: participants });
-        }
-
-        if (command === '.tagall' && isGroup) {
-            const textMsg = args.slice(1).join(' ');
-            const groupMetadata = await sock.groupMetadata(jid);
-            const participants = groupMetadata.participants;
-            let tek = `*📢 TAG ALL*\n\n${textMsg ? `Pesan: ${textMsg}\n\n` : ''}`;
-            for (let mem of participants) {
-                tek += `• @${mem.id.split('@')[0]}\n`;
-            }
-            await sock.sendMessage(jid, { text: tek, mentions: participants.map(p => p.id) });
-        }
-
-        if (command === '.leavegc' && isGroup) {
-            await sock.sendMessage(jid, { text: `👋 Bot akan keluar dari grup ini.` });
-            await sock.groupLeave(jid);
-        }
-
-        if (command === '.linkgc' && isGroup) {
-            try {
-                const code = await sock.groupInviteCode(jid);
-                await sock.sendMessage(jid, { text: `🔗 *Link Grup:*\nhttps://chat.whatsapp.com/${code}` });
-            } catch (err) {
-                await sock.sendMessage(jid, { text: `❌ Gagal mengambil link grup. Pastikan bot adalah admin.` });
-            }
-        }
-
-        if (command === '.revokelink' && isGroup) {
-            try {
-                await sock.groupRevokeInvite(jid);
-                await sock.sendMessage(jid, { text: `✅ Berhasil mereset link invite grup.` });
-            } catch (err) {
-                await sock.sendMessage(jid, { text: `❌ Gagal mereset link. Pastikan bot adalah admin.` });
-            }
-        }
-
-        if (command === '.groupinfo' && isGroup) {
-            try {
-                const groupMetadata = await sock.groupMetadata(jid);
-                let textInfo = `*📊 INFO GRUP*\n\n`;
-                textInfo += `*Nama:* ${groupMetadata.subject}\n`;
-                textInfo += `*ID:* ${groupMetadata.id}\n`;
-                textInfo += `*Dibuat:* ${new Date(groupMetadata.creation * 1000).toLocaleString()}\n`;
-                textInfo += `*Member:* ${groupMetadata.participants.length}\n`;
-                textInfo += `*Admin:* ${groupMetadata.participants.filter(p => p.admin).length}\n`;
-                textInfo += `*Deskripsi:*\n${groupMetadata.desc ? groupMetadata.desc.toString() : 'Tidak ada'}`;
-                await sock.sendMessage(jid, { text: textInfo });
-            } catch (err) {
-                await sock.sendMessage(jid, { text: `❌ Gagal mengambil info grup.` });
-            }
-        }
-
-        if (command === '.welcome' && isGroup) {
-            if (!groupSettings[jid]) groupSettings[jid] = {};
-            groupSettings[jid].welcome = !groupSettings[jid].welcome;
-            saveConfig();
-            await sock.sendMessage(jid, { text: `✅ Pesan Welcome berhasil di-${groupSettings[jid].welcome ? 'Aktifkan' : 'Matikan'} di grup ini.` });
-        }
-
-        if (command === '.setwelcome' && isGroup) {
-            const teks = args.slice(1).join(' ');
-            if (!teks) return await sock.sendMessage(jid, { text: `❌ Masukkan teks welcome.\nContoh: .setwelcome Halo @user, selamat datang di @group!` });
-            if (!groupSettings[jid]) groupSettings[jid] = {};
-            groupSettings[jid].welcomeMsg = teks;
-            saveConfig();
-            await sock.sendMessage(jid, { text: `✅ Berhasil mengatur teks welcome.` });
-        }
-
-        if (command === '.left' && isGroup) {
-            if (!groupSettings[jid]) groupSettings[jid] = {};
-            groupSettings[jid].left = !groupSettings[jid].left;
-            saveConfig();
-            await sock.sendMessage(jid, { text: `✅ Pesan Left (keluar) berhasil di-${groupSettings[jid].left ? 'Aktifkan' : 'Matikan'} di grup ini.` });
-        }
-
-        if (command === '.setleft' && isGroup) {
-            const teks = args.slice(1).join(' ');
-            if (!teks) return await sock.sendMessage(jid, { text: `❌ Masukkan teks left.\nContoh: .setleft Selamat tinggal @user dari @group.` });
-            if (!groupSettings[jid]) groupSettings[jid] = {};
-            groupSettings[jid].leftMsg = teks;
-            saveConfig();
-            await sock.sendMessage(jid, { text: `✅ Berhasil mengatur teks left.` });
-        }
-
-        if (command === '.antilink' && isGroup) {
-            if (!groupSettings[jid]) groupSettings[jid] = {};
-            groupSettings[jid].antilink = !groupSettings[jid].antilink;
-            if (groupSettings[jid].antilink) groupSettings[jid].antilinknokick = false;
-            saveConfig();
-            await sock.sendMessage(jid, { text: `✅ Anti-Link (Hapus & Kick) berhasil di-${groupSettings[jid].antilink ? 'Aktifkan' : 'Matikan'}.` });
-        }
-
-        if (command === '.antilinknokick' && isGroup) {
-            if (!groupSettings[jid]) groupSettings[jid] = {};
-            groupSettings[jid].antilinknokick = !groupSettings[jid].antilinknokick;
-            if (groupSettings[jid].antilinknokick) groupSettings[jid].antilink = false;
-            saveConfig();
-            await sock.sendMessage(jid, { text: `✅ Anti-Link (Hanya Hapus) berhasil di-${groupSettings[jid].antilinknokick ? 'Aktifkan' : 'Matikan'}.` });
-        }
-
-        if (command === '.antibadword' && isGroup) {
-            if (!groupSettings[jid]) groupSettings[jid] = {};
-            groupSettings[jid].antibadword = !groupSettings[jid].antibadword;
-            if (groupSettings[jid].antibadword) groupSettings[jid].antibadwordnokick = false;
-            saveConfig();
-            await sock.sendMessage(jid, { text: `✅ Anti-Badword (Hapus & Kick) berhasil di-${groupSettings[jid].antibadword ? 'Aktifkan' : 'Matikan'}.` });
-        }
-
-        if (command === '.antibadwordnokick' && isGroup) {
-            if (!groupSettings[jid]) groupSettings[jid] = {};
-            groupSettings[jid].antibadwordnokick = !groupSettings[jid].antibadwordnokick;
-            if (groupSettings[jid].antibadwordnokick) groupSettings[jid].antibadword = false;
-            saveConfig();
-            await sock.sendMessage(jid, { text: `✅ Anti-Badword (Hanya Hapus) berhasil di-${groupSettings[jid].antibadwordnokick ? 'Aktifkan' : 'Matikan'}.` });
-        }
-
-        if (command === '.addbadword' && isGroup) {
-            const word = args[1];
-            if (!word) return await sock.sendMessage(jid, { text: `❌ Masukkan kata yang ingin diblokir.\nContoh: .addbadword anjing` });
-            if (!groupSettings[jid]) groupSettings[jid] = {};
-            if (!groupSettings[jid].badwords) groupSettings[jid].badwords = [];
-            if (!groupSettings[jid].badwords.includes(word.toLowerCase())) {
-                groupSettings[jid].badwords.push(word.toLowerCase());
-                saveConfig();
-                await sock.sendMessage(jid, { text: `✅ Kata "${word}" berhasil ditambahkan ke daftar badword grup ini.` });
-            } else {
-                await sock.sendMessage(jid, { text: `⚠️ Kata "${word}" sudah ada di daftar badword.` });
-            }
-        }
-
-        if (command === '.delbadword' && isGroup) {
-            const word = args[1];
-            if (!word) return await sock.sendMessage(jid, { text: `❌ Masukkan kata yang ingin dihapus.\nContoh: .delbadword anjing` });
-            if (!groupSettings[jid] || !groupSettings[jid].badwords) return await sock.sendMessage(jid, { text: `⚠️ Belum ada daftar badword di grup ini.` });
-            const index = groupSettings[jid].badwords.indexOf(word.toLowerCase());
-            if (index > -1) {
-                groupSettings[jid].badwords.splice(index, 1);
-                saveConfig();
-                await sock.sendMessage(jid, { text: `✅ Kata "${word}" berhasil dihapus dari daftar badword grup ini.` });
-            } else {
-                await sock.sendMessage(jid, { text: `⚠️ Kata "${word}" tidak ditemukan di daftar badword.` });
-            }
-        }
-
-        if (command === '.listbadword' && isGroup) {
-            if (!groupSettings[jid] || !groupSettings[jid].badwords || groupSettings[jid].badwords.length === 0) {
-                return await sock.sendMessage(jid, { text: `📝 Daftar badword grup ini kosong.` });
-            }
-            await sock.sendMessage(jid, { text: `📝 *Daftar Badword Grup:*\n\n` + groupSettings[jid].badwords.map((w, i) => `${i + 1}. ${w}`).join('\n') });
-        }
-
-        if (command === '.resetbadword' && isGroup) {
-            if (!groupSettings[jid]) groupSettings[jid] = {};
-            groupSettings[jid].badwords = [];
-            saveConfig();
-            await sock.sendMessage(jid, { text: `✅ Berhasil menghapus semua daftar badword di grup ini.` });
-        }
-
-        // --- HANDLER POLL VOTE ---
-        if (m.type === 'append' || m.type === 'notify') {
-            for (const msg of m.messages) {
-                if (msg.message?.pollUpdateMessage) {
-                    // Fitur ini experimental karena Baileys susah baca isi vote tanpa memori state.
-                    // Tapi karena kita bikin format nama poll khusus, kita tangkap respon pesannya.
-                    console.log("[INFO] Ada voting masuk di Poll!");
-                }
             }
         }
     });
