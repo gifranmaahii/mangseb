@@ -26,7 +26,6 @@ let isSpamming = false;
 let blacklistedGroups = [];
 let sendDelayMs = 60000; // Default 1 menit (60000 ms)
 let lastNonCommandMessage = null;
-let groupSettings = {}; // Menyimpan setting per grup (welcome, left, dll)
 let activeSock = null; // Socket global, selalu di-update saat reconnect
 let spamOwnerJid = null; // JID owner yang start spam
 let spamCycleCount = 0; // Counter siklus spam
@@ -40,7 +39,6 @@ if (fs.existsSync(configFile)) {
         cronExpression = config.cronExpression || '0 * * * *';
         blacklistedGroups = config.blacklistedGroups || [];
         sendDelayMs = config.sendDelayMs || 60000;
-        groupSettings = config.groupSettings || {};
     } catch (e) {
         console.error('Error loading config:', e);
     }
@@ -51,8 +49,7 @@ function saveConfig() {
         savedMessage,
         cronExpression,
         blacklistedGroups,
-        sendDelayMs,
-        groupSettings
+        sendDelayMs
     }, null, 2));
 }
 
@@ -397,29 +394,6 @@ async function startBot() {
         }
     });
 
-    sock.ev.on('group-participants.update', async (update) => {
-        const { id, participants, action } = update;
-        try {
-            const settings = groupSettings[id] || {};
-            const groupMetadata = await sock.groupMetadata(id).catch(() => null);
-            const groupName = groupMetadata ? groupMetadata.subject : 'Grup';
-
-            for (let participant of participants) {
-                if (action === 'add' && settings.welcome) {
-                    let msg = settings.welcomeMsg || `Halo @user, selamat datang di @group!`;
-                    msg = msg.replace(/@user/g, `@${participant.split('@')[0]}`).replace(/@group/g, groupName);
-                    await sock.sendMessage(id, { text: msg, mentions: [participant] });
-                } else if (action === 'remove' && settings.left) {
-                    let msg = settings.leftMsg || `Selamat tinggal @user dari @group!`;
-                    msg = msg.replace(/@user/g, `@${participant.split('@')[0]}`).replace(/@group/g, groupName);
-                    await sock.sendMessage(id, { text: msg, mentions: [participant] });
-                }
-            }
-        } catch (err) {
-            console.error('Error in group-participants.update:', err);
-        }
-    });
-
     sock.ev.on('messages.upsert', async m => {
         try {
             if (m.type !== 'notify' && m.type !== 'append') return;
@@ -478,17 +452,46 @@ async function startBot() {
                     return await sock.sendMessage(jid, { text: '✅ Semua grup sudah di-blacklist.' });
                 }
 
-                // Polling adalah satu-satunya fitur "tombol" yang pasti muncul di akun biasa tahun 2024
-                const options = available.slice(0, 11).map(g => g.subject.substring(0, 50));
-                options.push('❌ BATAL');
+                const rows = available.slice(0, 20).map(g => ({
+                    title: g.subject.substring(0, 50),
+                    description: `ID: ${g.id}`,
+                    rowId: `.blacklist ${g.id}`
+                }));
 
-                await sock.sendMessage(jid, {
-                    poll: {
-                        name: '🚫 *MENU BLACKLIST GRUP*\n(Silakan pilih nama grup di bawah ini)',
-                        values: options,
-                        selectableCount: 1
+                const buttons = [{
+                    name: "single_select",
+                    buttonParamsJson: JSON.stringify({
+                        title: "Pilih Grup",
+                        sections: [{
+                            title: "Grup Tersedia",
+                            rows: rows
+                        }]
+                    })
+                }];
+
+                const msg = generateWAMessageFromContent(jid, {
+                    viewOnceMessage: {
+                        message: {
+                            interactiveMessage: proto.Message.InteractiveMessage.create({
+                                body: proto.Message.InteractiveMessage.Body.create({
+                                    text: "Silakan pilih grup yang ingin di-blacklist agar tidak dikirimi pesan promosi."
+                                }),
+                                footer: proto.Message.InteractiveMessage.Footer.create({
+                                    text: "Menu Blacklist"
+                                }),
+                                header: proto.Message.InteractiveMessage.Header.create({
+                                    title: "🚫 *BLACKLIST GRUP*",
+                                    hasMediaAttachment: false
+                                }),
+                                nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+                                    buttons: buttons
+                                })
+                            })
+                        }
                     }
-                });
+                }, {});
+
+                await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
                 return;
             }
 
@@ -523,16 +526,46 @@ async function startBot() {
                     return await sock.sendMessage(jid, { text: '⚠️ Tidak ada grup ter-blacklist.' });
                 }
 
-                const options = blacklisted.slice(0, 11).map(g => g.subject.substring(0, 50));
-                options.push('❌ BATAL');
+                const rows = blacklisted.slice(0, 20).map(g => ({
+                    title: g.subject.substring(0, 50),
+                    description: `ID: ${g.id}`,
+                    rowId: `.unblacklist ${g.id}`
+                }));
 
-                await sock.sendMessage(jid, {
-                    poll: {
-                        name: '🔓 *MENU UN-BLACKLIST GRUP*\n(Pilih grup untuk diaktifkan kembali)',
-                        values: options,
-                        selectableCount: 1
+                const buttons = [{
+                    name: "single_select",
+                    buttonParamsJson: JSON.stringify({
+                        title: "Pilih Grup",
+                        sections: [{
+                            title: "Grup Ter-blacklist",
+                            rows: rows
+                        }]
+                    })
+                }];
+
+                const msg = generateWAMessageFromContent(jid, {
+                    viewOnceMessage: {
+                        message: {
+                            interactiveMessage: proto.Message.InteractiveMessage.create({
+                                body: proto.Message.InteractiveMessage.Body.create({
+                                    text: "Silakan pilih grup yang ingin diaktifkan kembali."
+                                }),
+                                footer: proto.Message.InteractiveMessage.Footer.create({
+                                    text: "Menu Un-blacklist"
+                                }),
+                                header: proto.Message.InteractiveMessage.Header.create({
+                                    title: "🔓 *UN-BLACKLIST GRUP*",
+                                    hasMediaAttachment: false
+                                }),
+                                nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+                                    buttons: buttons
+                                })
+                            })
+                        }
                     }
-                });
+                }, {});
+
+                await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
                 return;
             }
 
@@ -684,22 +717,79 @@ async function startBot() {
         }
         
         if (command === '.menu') {
-            const menuText = `*🤖 MENU BOT SPAM GRUP 🤖*\n\n` +
-            `Bot ini berjalan pada nomor ini sendiri (ngobrol sendiri), tidak membalas chat orang lain.\n\n` +
-            `*Daftar Perintah Spam:*\n` +
-            `1. *.listgrup* : Melihat semua grup (termasuk status blacklist)\n` +
-            `2. *.setpesan* : Forward pesan dari saluran, lalu kirim .setpesan (jangan di-reply)\n` +
-            `3. *.setwaktu <angka> <detik/menit/jam>* : Mengatur perulangan kirim semua. Contoh: *.setwaktu 30 menit*\n` +
-            `4. *.setjeda <angka> <detik/menit>* : Mengatur jeda kirim antar grup. Contoh: *.setjeda 1 menit*\n` +
-            `5. *.blacklist <nomor/id>* : Supaya grup tersebut tidak disebarkan promosi\n` +
-            `6. *.unblacklist <nomor/id>* : Menghapus grup dari daftar blacklist\n` +
-            `7. *.startspam* : Memulai proses pengiriman spam sesuai jadwal\n` +
-            `8. *.stopspam* : Menghentikan proses spam\n` +
-            `9. *.cekconfig* : Melihat konfigurasi lengkap\n` +
-            `10. *.teskirim* : Mengetes kirim ke 1 grup (Grup pertama)\n` +
-            `11. *.addbotjaseb* : Menambahkan bot baru (Multi-Instance)`;
+            const menuText = `Bot berjalan pada nomor ini sendiri, tidak membalas chat orang lain.`;
             
-            await sock.sendMessage(jid, { text: menuText });
+            const buttons = [
+                {
+                    name: "single_select",
+                    buttonParamsJson: JSON.stringify({
+                        title: "Buka List Menu",
+                        sections: [
+                            {
+                                title: "Utama",
+                                rows: [
+                                    { title: "Daftar Grup", description: "Melihat semua grup", rowId: ".listgrup" },
+                                    { title: "Cek Config", description: "Melihat konfigurasi saat ini", rowId: ".cekconfig" }
+                                ]
+                            },
+                            {
+                                title: "Kontrol Spam",
+                                rows: [
+                                    { title: "Mulai Spam", description: "Jalankan spam otomatis", rowId: ".startspam" },
+                                    { title: "Stop Spam", description: "Hentikan spam", rowId: ".stopspam" }
+                                ]
+                            },
+                            {
+                                title: "Fitur Lain",
+                                rows: [
+                                    { title: "Tambah Bot", description: "Multi-instance", rowId: ".addbotjaseb" },
+                                    { title: "Blacklist", description: "Menu blacklist", rowId: ".blacklist" },
+                                    { title: "Unblacklist", description: "Menu unblacklist", rowId: ".unblacklist" }
+                                ]
+                            }
+                        ]
+                    })
+                },
+                {
+                    name: "quick_reply",
+                    buttonParamsJson: JSON.stringify({
+                        display_text: "Mulai Spam 🚀",
+                        id: ".startspam"
+                    })
+                },
+                {
+                    name: "quick_reply",
+                    buttonParamsJson: JSON.stringify({
+                        display_text: "Cek Status 📊",
+                        id: ".cekconfig"
+                    })
+                }
+            ];
+
+            const msg = generateWAMessageFromContent(jid, {
+                viewOnceMessage: {
+                    message: {
+                        interactiveMessage: proto.Message.InteractiveMessage.create({
+                            body: proto.Message.InteractiveMessage.Body.create({
+                                text: menuText
+                            }),
+                            footer: proto.Message.InteractiveMessage.Footer.create({
+                                text: "Premium Bot Spam v2.0"
+                            }),
+                            header: proto.Message.InteractiveMessage.Header.create({
+                                title: "🤖 *MENU UTAMA BOT SPAM*",
+                                subtitle: "Silakan pilih menu di bawah",
+                                hasMediaAttachment: false
+                            }),
+                            nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+                                buttons: buttons
+                            })
+                        })
+                    }
+                }
+            }, {});
+
+            await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
         }
 
         if (command === '.teskirim') {
