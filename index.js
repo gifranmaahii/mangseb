@@ -1051,6 +1051,7 @@ async function startBot() {
             `.blacklist\n` +
             `.blacklistkata <kata1, kata2>\n` +
             `.unblacklist\n` +
+            `.teskirim\n` +
             `.startspam\n` +
             `.stopspam\n` +
             `.cekconfig\n` +
