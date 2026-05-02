@@ -880,6 +880,53 @@ async function startBot() {
             }
         }
 
+        if (command === '.delpesan' || command === '.hapuspesan') {
+            const indexArg = parseInt(args[1]);
+            
+            if (!isNaN(indexArg) && indexArg > 0 && indexArg <= savedMessages.length) {
+                // Hapus satu pesan spesifik
+                savedMessages.splice(indexArg - 1, 1);
+                // Jika pesan utama (savedMessage) terhapus dan masih ada sisa pesan, set ke pesan pertama
+                if (savedMessages.length > 0) {
+                    savedMessage = savedMessages[0];
+                } else {
+                    savedMessage = null;
+                }
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ *Pesan ke-${indexArg} berhasil dihapus!*\n(Sisa ${savedMessages.length} pesan di rotasi)` });
+            } else if (args[1] === 'semua' || args[1] === 'all' || !args[1]) {
+                // Default: Hapus semua
+                savedMessage = null;
+                savedMessages = [];
+                saveConfig();
+                await sock.sendMessage(jid, { text: '🗑️ *Semua pesan promosi berhasil dihapus!*\n\nSilakan setel ulang dengan mengirim pesan lalu ketik *.setpesan*' });
+            } else {
+                await sock.sendMessage(jid, { text: `❌ Format salah atau urutan pesan tidak ditemukan.\nContoh untuk hapus pesan ke-2:\n*.delpesan 2*\n\nAtau untuk hapus semua ketik:\n*.delpesan semua*` });
+            }
+        }
+
+        if (command === '.cekpesan' || command === '.listpesan') {
+            if (savedMessages.length === 0 && (!savedMessage || !savedMessage.message)) {
+                await sock.sendMessage(jid, { text: '⚠️ Tidak ada pesan promosi yang tersimpan.' });
+                return;
+            }
+            
+            await sock.sendMessage(jid, { text: `📋 *DAFTAR PESAN PROMOSI (${savedMessages.length} Pesan)*\n_Berikut adalah pesan-pesan yang akan dikirim secara rotasi:_` });
+            
+            for (let i = 0; i < savedMessages.length; i++) {
+                let msgObjToUse = savedMessages[i];
+                // Kirim label nomor pesannya dulu
+                await sock.sendMessage(jid, { text: `*(Pesan ke-${i + 1})* 👇` });
+                await new Promise(r => setTimeout(r, 200));
+                
+                // Kirim isi pesannya
+                await sock.relayMessage(jid, msgObjToUse.message, { messageId: sock.generateMessageTag() });
+                await new Promise(r => setTimeout(r, 800));
+            }
+            
+            await sock.sendMessage(jid, { text: `💡 *Tip:* Untuk menghapus salah satu pesan, ketik misalnya *.delpesan 1* atau *.delpesan 2*\nUntuk menghapus semua, ketik *.delpesan semua*` });
+        }
+
         if (command === '.addvcard') {
             const params = text.substring(9).trim().split('|');
             if (params.length < 2) {
@@ -991,6 +1038,8 @@ async function startBot() {
             `.listgrup\n` +
             `.setpesan\n` +
             `.addpesan\n` +
+            `.cekpesan\n` +
+            `.delpesan\n` +
             `.addvcard <nama>|<nomor>\n` +
             `.setwaktu <angka> <menit/jam>\n` +
             `.setjeda <angka> <detik>\n` +
