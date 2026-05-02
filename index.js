@@ -1181,6 +1181,7 @@ async function startBot() {
             `.cekpesan\n` +
             `.delpesan\n` +
             `.addvcard <nama>|<nomor>\n` +
+            `.pushkontak\n` +
             `.setwaktu <angka> <menit/jam>\n` +
             `.setjeda <angka> <detik>\n` +
             `.sethidetag <on/off>\n` +
