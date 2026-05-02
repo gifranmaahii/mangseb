@@ -529,12 +529,22 @@ async function startBot() {
                 loginMethod = 'pairing';
                 let nomorWa = await question('Masukkan nomor WhatsApp (contoh: 628123456789): ');
                 nomorWa = nomorWa.replace(/[^0-9]/g, '');
-                let code = await sock.requestPairingCode(nomorWa);
-                code = code?.match(/.{1,4}/g)?.join('-') || code;
-                console.log(`\n========================================`);
-                console.log(`✅ KODE PAIRING ANDA: ${code}`);
-                console.log(`Silakan masukkan kode ini di aplikasi WhatsApp Anda.`);
-                console.log(`========================================\n`);
+                if (nomorWa.startsWith('0')) {
+                    nomorWa = '62' + nomorWa.substring(1);
+                }
+                console.log(`⏳ Meminta kode pairing untuk nomor: ${nomorWa}...`);
+                try {
+                    let code = await sock.requestPairingCode(nomorWa);
+                    code = code?.match(/.{1,4}/g)?.join('-') || code;
+                    console.log(`\n========================================`);
+                    console.log(`✅ KODE PAIRING ANDA: ${code}`);
+                    console.log(`Silakan masukkan kode ini di aplikasi WhatsApp Anda.`);
+                    console.log(`========================================\n`);
+                } catch (err) {
+                    console.log(`\n❌ GAGAL MEMINTA KODE: ${err.message}`);
+                    console.log(`Pastikan nomor sudah benar dan limit request API WhatsApp belum habis.`);
+                    console.log(`Silakan stop script, hapus folder session, lalu coba login via QR Code.`);
+                }
             } else {
                 loginMethod = 'qr';
                 console.log(`\nMenunggu QR Code... Silakan scan QR Code yang muncul di bawah ini.`);
