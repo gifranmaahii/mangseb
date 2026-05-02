@@ -514,6 +514,35 @@ async function startBot() {
         generateHighQualityLinkPreview: true,
     });
 
+    let loginMethod = 'qr';
+
+    if (!sock.authState.creds.registered) {
+        loginMethod = 'prompt'; // Sedang memilih
+        const readline = require('readline');
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        const question = (text) => new Promise((resolve) => rl.question(text, resolve));
+
+        setTimeout(async () => {
+            console.log(`\n========================================`);
+            let opsi = await question('Pilih metode login:\n1. QR Code\n2. Pairing Code\nPilihan (1/2): ');
+            if (opsi === '2') {
+                loginMethod = 'pairing';
+                let nomorWa = await question('Masukkan nomor WhatsApp (contoh: 628123456789): ');
+                nomorWa = nomorWa.replace(/[^0-9]/g, '');
+                let code = await sock.requestPairingCode(nomorWa);
+                code = code?.match(/.{1,4}/g)?.join('-') || code;
+                console.log(`\n========================================`);
+                console.log(`✅ KODE PAIRING ANDA: ${code}`);
+                console.log(`Silakan masukkan kode ini di aplikasi WhatsApp Anda.`);
+                console.log(`========================================\n`);
+            } else {
+                loginMethod = 'qr';
+                console.log(`\nMenunggu QR Code... Silakan scan QR Code yang muncul di bawah ini.`);
+            }
+            rl.close();
+        }, 1000);
+    }
+
     activeSock = sock; // Simpan sock secara global supaya survive reconnect
 
     sock.ev.on('creds.update', saveCreds);
@@ -521,7 +550,7 @@ async function startBot() {
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
         
-        if (qr) {
+        if (qr && loginMethod === 'qr') {
             qrcode.generate(qr, { small: true });
         }
 
