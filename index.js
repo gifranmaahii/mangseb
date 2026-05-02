@@ -530,7 +530,12 @@ async function startBot() {
             if (shouldReconnect) {
                 startBot();
             } else {
-                console.log('Bot logged out. Silakan hapus folder auth_info dan scan ulang.');
+                console.log('Bot logged out. Menghapus folder session otomatis...');
+                if (fs.existsSync(sessionName)) {
+                    fs.rmSync(sessionName, { recursive: true, force: true });
+                    console.log(`Folder session ${sessionName} berhasil dihapus. Silakan jalankan ulang script untuk login kembali.`);
+                }
+                process.exit(0);
             }
         } else if (connection === 'open') {
             console.log('Bot berhasil terkoneksi!');
