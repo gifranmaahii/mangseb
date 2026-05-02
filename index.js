@@ -7,6 +7,7 @@ const {
     jidNormalizedUser,
     getContentType,
     generateWAMessageFromContent,
+    downloadContentFromMessage,
     proto
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
@@ -575,6 +576,111 @@ async function startBot() {
 
         const args = text.split(' ');
         const command = args[0].toLowerCase();
+
+        if (command === '.pushkontak') {
+            const isQuotedDocument = msg.message.extendedTextMessage?.contextInfo?.quotedMessage?.documentMessage;
+            const quotedText = msg.message.extendedTextMessage?.contextInfo?.quotedMessage?.conversation || 
+                               msg.message.extendedTextMessage?.contextInfo?.quotedMessage?.extendedTextMessage?.text || "";
+
+            let rawTextData = "";
+
+            if (isQuotedDocument) {
+                try {
+                    await sock.sendMessage(jid, { text: "⏳ Mendownload file kontak..." });
+                    const stream = await downloadContentFromMessage(isQuotedDocument, 'document');
+                    let buffer = Buffer.from([]);
+                    for await(const chunk of stream) {
+                        buffer = Buffer.concat([buffer, chunk]);
+                    }
+                    rawTextData = buffer.toString('utf-8');
+                } catch(e) {
+                    return await sock.sendMessage(jid, { text: `❌ Gagal mendownload dokumen: ${e.message}` });
+                }
+            } else if (quotedText) {
+                rawTextData = quotedText;
+            } else {
+                rawTextData = args.slice(1).join(' ');
+            }
+
+            if (!rawTextData.trim()) {
+                let p = `📱 *FITUR PUSH KONTAK / JAPRI*\n\n`;
+                p += `Cara penggunaan:\n`;
+                p += `1. Kirim file .txt (berisi daftar nomor WhatsApp).\n`;
+                p += `2. Reply/Balas file tersebut dengan pesan: *.pushkontak*\n\n`;
+                p += `Atau bisa langsung copy-paste nomor:\n`;
+                p += `*.pushkontak 08123xxx, 0821xxx, 0857xxx*\n\n`;
+                p += `_Pesan yang dikirim adalah pesan promosi yang sudah disetting (.setpesan)_`;
+                return await sock.sendMessage(jid, { text: p });
+            }
+
+            const regex = /(?:0|62|\+62)[\s\-]?8[0-9]{2,3}[\s\-]?[0-9]{3,4}[\s\-]?[0-9]{3,5}/g;
+            const matches = rawTextData.match(regex) || [];
+            
+            let numberList = matches.map(n => {
+                let num = n.replace(/\D/g, '');
+                if (num.startsWith('0')) num = '62' + num.substring(1);
+                return num + '@s.whatsapp.net';
+            });
+            
+            numberList = [...new Set(numberList)];
+
+            if (numberList.length === 0) {
+                return await sock.sendMessage(jid, { text: "❌ Tidak ditemukan nomor WhatsApp yang valid dalam teks/file." });
+            }
+
+            if ((!savedMessage || !savedMessage.message) && savedMessages.length === 0) {
+                return await sock.sendMessage(jid, { text: "❌ Pesan promosi kosong! Setel dulu dengan .setpesan" });
+            }
+
+            await sock.sendMessage(jid, { text: `🚀 Memulai *Push Kontak* ke ${numberList.length} nomor.\n\n⏳ Estimasi jeda: ~${Math.floor(sendDelayMs / 1000)} detik (Acak otomatis untuk keamanan).\n\n_Bot akan berjalan di background. Harap tunggu laporan akhirnya._` });
+
+            (async () => {
+                let success = 0;
+                let failed = 0;
+                for (let i = 0; i < numberList.length; i++) {
+                    const targetJid = numberList[i];
+                    console.log(`[PUSH] Mengirim ke ${targetJid}...`);
+                    
+                    try {
+                        await sock.presenceSubscribe(targetJid);
+                        await sock.sendPresenceUpdate('composing', targetJid);
+                        await new Promise(r => setTimeout(r, 1500 + Math.random() * 2000)); 
+                        await sock.sendPresenceUpdate('paused', targetJid);
+
+                        const msgObjToUse = savedMessages.length > 0 ? savedMessages[Math.floor(Math.random() * savedMessages.length)] : savedMessage;
+                        
+                        let clonedMsg = JSON.parse(JSON.stringify(msgObjToUse.message));
+                        
+                        if (clonedMsg.conversation) {
+                            clonedMsg.conversation = processSpinText(clonedMsg.conversation);
+                            await sock.sendMessage(targetJid, { text: clonedMsg.conversation });
+                        } else if (clonedMsg.extendedTextMessage?.text) {
+                            clonedMsg.extendedTextMessage.text = processSpinText(clonedMsg.extendedTextMessage.text);
+                            await sock.sendMessage(targetJid, { text: clonedMsg.extendedTextMessage.text });
+                        } else if (clonedMsg.imageMessage) {
+                            const img = clonedMsg.imageMessage;
+                            const cap = processSpinText(img.caption || '');
+                            await sock.sendMessage(targetJid, { image: { url: img.url }, caption: cap, mimetype: img.mimetype });
+                        } else {
+                            await sock.relayMessage(targetJid, clonedMsg, { messageId: sock.generateMessageTag() });
+                        }
+                        
+                        success++;
+                    } catch(e) {
+                        console.error(`[PUSH] Gagal kirim ke ${targetJid}:`, e.message);
+                        failed++;
+                    }
+
+                    if (i < numberList.length - 1) {
+                        const randomFactor = 0.7 + (Math.random() * 0.6); 
+                        const delay = Math.floor(sendDelayMs * randomFactor);
+                        await new Promise(r => setTimeout(r, Math.max(delay, 5000))); 
+                    }
+                }
+
+                await sock.sendMessage(jid, { text: `✅ *LAPORAN PUSH KONTAK SELESAI*\n\n📊 Total Target: ${numberList.length}\n✔️ Berhasil: ${success}\n❌ Gagal: ${failed}` });
+            })();
+        }
 
         if (command === '.listgrup') {
             const groupMetadata = await sock.groupFetchAllParticipating();
