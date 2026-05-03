@@ -44,6 +44,7 @@ let ownerNumbers = []; // Daftar nomor owner tambahan
 let linkScraper = false; // Fitur pemantau link
 let scraperTargetJid = null; // Tujuan laporan link scraper
 let priorityMainMessage = false; // Prioritas pesan utama (.setpesan)
+let mainMessagePriorityPercent = 60; // Persentase prioritas pesan utama (0-100)
 let doubleMessageMode = false; // Kirim 2 pesan per grup (utama + rotasi)
 let doubleMessageDelay = 5000; // Jeda antar pesan dalam grup (ms)
 let scrapedLinks = []; // Database link yang sudah ditemukan
@@ -78,6 +79,7 @@ if (fs.existsSync(configFile)) {
         linkScraper = config.linkScraper || false;
         scraperTargetJid = config.scraperTargetJid || null;
         priorityMainMessage = config.priorityMainMessage || false;
+        mainMessagePriorityPercent = config.mainMessagePriorityPercent !== undefined ? config.mainMessagePriorityPercent : 60;
         doubleMessageMode = config.doubleMessageMode || false;
         doubleMessageDelay = config.doubleMessageDelay || 5000;
     } catch (e) {
@@ -103,6 +105,7 @@ function saveConfig() {
         linkScraper,
         scraperTargetJid,
         priorityMainMessage,
+        mainMessagePriorityPercent,
         doubleMessageMode,
         doubleMessageDelay
     }, null, 2));
@@ -170,9 +173,10 @@ async function handleJadibot(senderJid, type, number = '') {
 // Helper: dapatkan pesan selanjutnya
 function getNextMessageToUse() {
     if (savedMessages.length > 0) {
-        // Jika prioritas pesan utama ON, 60% peluang pilih pesan utama
+        // Jika prioritas pesan utama ON, gunakan peluang berdasarkan persentase yang di-set
         if (priorityMainMessage && savedMessage) {
-            if (Math.random() < 0.6) return savedMessage;
+            const chance = mainMessagePriorityPercent / 100;
+            if (Math.random() < chance) return savedMessage;
         }
 
         if (useMessageRotation) {
@@ -1359,7 +1363,7 @@ async function startBot() {
             statusText += `Rotasi Promosi: ${savedMessages.length > 1 ? `✅ Aktif (${savedMessages.length} pesan)` : '❌ OFF (1 pesan)'}\n`;
             statusText += `Pesan Utama: ${savedMessage ? '✅ Ada' : '❌ Belum di-set'}\n\n`;
             statusText += `Mode Rotasi Pesan: ${useMessageRotation ? '✅ Acak' : '❌ Berurutan'}\n`;
-            statusText += `Prioritas Pesan Utama: ${priorityMainMessage ? '✅ ON (60%)' : '❌ OFF'}\n`;
+            statusText += `Prioritas Pesan Utama: ${priorityMainMessage ? `✅ ON (${mainMessagePriorityPercent}%)` : '❌ OFF'}\n`;
             statusText += `Mode 2 Pesan (Double): ${doubleMessageMode ? '✅ ON' : '❌ OFF'}\n`;
             if (doubleMessageMode) statusText += `Jeda Double Pesan: ${doubleMessageDelay / 1000} detik\n`;
             statusText += `Link Scraper (Mata-mata): ${linkScraper ? '✅ ON' : '❌ OFF'}\n\n`;
@@ -1394,6 +1398,17 @@ async function startBot() {
                 await sock.sendMessage(jid, { text: '❌ *Prioritas Pesan Utama dimatikan!*' });
             } else {
                 await sock.sendMessage(jid, { text: `Status Prioritas: ${priorityMainMessage ? 'ON' : 'OFF'}\nGunakan: .prioritymain on/off` });
+            }
+        }
+
+        if (command === '.setpriority') {
+            const angka = parseInt(args[1]);
+            if (!isNaN(angka) && angka >= 0 && angka <= 100) {
+                mainMessagePriorityPercent = angka;
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ *Persentase Prioritas diatur ke ${angka}%*\nBot akan mengirim pesan utama sebanyak ${angka}% dari total kiriman.` });
+            } else {
+                await sock.sendMessage(jid, { text: '❌ Masukkan angka 0-100!\nContoh: .setpriority 75' });
             }
         }
 
@@ -1511,6 +1526,7 @@ async function startBot() {
             `.linkscraper <on/off>\n` +
             `.setscrapertarget\n` +
             `.prioritymain <on/off>\n` +
+            `.setpriority <0-100>\n` +
             `.doublemsg <on/off>\n` +
             `.setdoublejeda <detik>`;
 
