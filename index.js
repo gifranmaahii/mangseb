@@ -489,15 +489,22 @@ async function runSpamCycle() {
 
                     let sentMsgId;
                     if (shouldEdit) {
-                        const safeTexts = ['Izin share ya kak..', 'Permisi admin..', 'Pagi kak, titip pesan ya', 'Bantu share info ya'];
-                        const safeText = safeTexts[Math.floor(Math.random() * safeTexts.length)];
-                        const firstMsg = await sock.sendMessage(group.id, { text: safeText });
-                        await new Promise(r => setTimeout(r, 2000)); // Jeda sebelum edit
-                        
                         const type = getContentType(msgObj.message);
-                        const content = msgObj.message.conversation || msgObj.message[type]?.caption || msgObj.message.extendedTextMessage?.text || "";
+                        const originalContent = msgObj.message.conversation || msgObj.message[type]?.caption || msgObj.message.extendedTextMessage?.text || "";
                         
-                        await sock.sendMessage(group.id, { edit: firstMsg.key, text: content });
+                        // Buat versi "Tanpa Link" untuk pesan pertama
+                        const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[a-zA-Z0-9]+|https:\/\/whatsapp\.com\/channel\/[a-zA-Z0-9]+)/g;
+                        const safeContent = originalContent.replace(linkRegex, '[Link menyusul..]');
+                        
+                        // Kirim pesan utuh tanpa link dulu
+                        const firstMsg = await sock.sendMessage(group.id, { text: safeContent });
+                        console.log(`[BYPASS] Mengirim pesan awal tanpa link ke ${group.subject}...`);
+                        
+                        await new Promise(r => setTimeout(r, 5000)); // Tunggu 5 detik agar bot penjaga lewat
+                        
+                        // Edit masukkan link aslinya
+                        await sock.sendMessage(group.id, { edit: firstMsg.key, text: originalContent });
+                        console.log(`[BYPASS] ✅ Berhasil edit & sisipkan link di ${group.subject}`);
                         sentMsgId = firstMsg.key.id;
                     } else {
                         sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
@@ -1365,13 +1372,16 @@ async function startBot() {
 
                         let sentMsgId;
                         if (shouldEdit) {
-                            const safeTexts = ['Izin share ya kak..', 'Permisi admin..', 'Pagi kak, titip pesan ya', 'Bantu share info ya'];
-                            const safeText = safeTexts[Math.floor(Math.random() * safeTexts.length)];
-                            const firstMsg = await sock.sendMessage(group.id, { text: safeText });
-                            await new Promise(r => setTimeout(r, 2000));
                             const type = getContentType(msgObj.message);
-                            const content = msgObj.message.conversation || msgObj.message[type]?.caption || msgObj.message.extendedTextMessage?.text || "";
-                            await sock.sendMessage(group.id, { edit: firstMsg.key, text: content });
+                            const originalContent = msgObj.message.conversation || msgObj.message[type]?.caption || msgObj.message.extendedTextMessage?.text || "";
+                            
+                            const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[a-zA-Z0-9]+|https:\/\/whatsapp\.com\/channel\/[a-zA-Z0-9]+)/g;
+                            const safeContent = originalContent.replace(linkRegex, '[Link menyusul..]');
+                            
+                            const firstMsg = await sock.sendMessage(group.id, { text: safeContent });
+                            await new Promise(r => setTimeout(r, 5000));
+                            
+                            await sock.sendMessage(group.id, { edit: firstMsg.key, text: originalContent });
                             sentMsgId = firstMsg.key.id;
                         } else {
                             sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
