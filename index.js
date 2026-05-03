@@ -1445,7 +1445,11 @@ async function startBot() {
             statusText += `Prioritas Pesan Utama: ${priorityMainMessage ? `✅ ON (${mainMessagePriorityPercent}%)` : '❌ OFF'}\n`;
             statusText += `Mode 2 Pesan (Double): ${doubleMessageMode ? '✅ ON' : '❌ OFF'}\n`;
             if (doubleMessageMode) statusText += `Jeda Double Pesan: ${doubleMessageDelay / 1000} detik\n`;
-            statusText += `Link Scraper (Mata-mata): ${linkScraper ? '✅ ON' : '❌ OFF'}\n\n`;
+            statusText += `\n*BYPASS & SENSOR:*\n`;
+            statusText += `Edit Mode: ${editMode === 'auto' ? '🤖 AUTO (Pintar)' : (editMode === 'on' ? '✅ SELALU' : '❌ OFF')}\n`;
+            statusText += `Anti-Link ZWS: ${useZws ? '✅ AKTIF' : '❌ OFF'}\n`;
+            statusText += `Grup Terdeteksi Bot: ${guardedGroups.length} grup\n`;
+            statusText += `Link Scraper: ${linkScraper ? '✅ ON' : '❌ OFF'}\n\n`;
             statusText += `Ketik .menu untuk melihat daftar perintah.`;
             await sock.sendMessage(jid, { text: statusText });
         }
