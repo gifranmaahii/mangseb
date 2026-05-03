@@ -43,6 +43,9 @@ let currentMessageIndex = 0; // Indeks pesan saat ini jika rotasi off
 let ownerNumbers = []; // Daftar nomor owner tambahan
 let linkScraper = false; // Fitur pemantau link
 let scraperTargetJid = null; // Tujuan laporan link scraper
+let priorityMainMessage = false; // Prioritas pesan utama (.setpesan)
+let doubleMessageMode = false; // Kirim 2 pesan per grup (utama + rotasi)
+let doubleMessageDelay = 5000; // Jeda antar pesan dalam grup (ms)
 let scrapedLinks = []; // Database link yang sudah ditemukan
 const scrapedLinksFile = './scraped_links.json';
 
@@ -74,6 +77,9 @@ if (fs.existsSync(configFile)) {
         ownerNumbers = config.ownerNumbers || [];
         linkScraper = config.linkScraper || false;
         scraperTargetJid = config.scraperTargetJid || null;
+        priorityMainMessage = config.priorityMainMessage || false;
+        doubleMessageMode = config.doubleMessageMode || false;
+        doubleMessageDelay = config.doubleMessageDelay || 5000;
     } catch (e) {
         console.error('Error loading config:', e);
     }
@@ -95,7 +101,10 @@ function saveConfig() {
         useMessageRotation,
         ownerNumbers,
         linkScraper,
-        scraperTargetJid
+        scraperTargetJid,
+        priorityMainMessage,
+        doubleMessageMode,
+        doubleMessageDelay
     }, null, 2));
 }
 
@@ -161,6 +170,11 @@ async function handleJadibot(senderJid, type, number = '') {
 // Helper: dapatkan pesan selanjutnya
 function getNextMessageToUse() {
     if (savedMessages.length > 0) {
+        // Jika prioritas pesan utama ON, 60% peluang pilih pesan utama
+        if (priorityMainMessage && savedMessage) {
+            if (Math.random() < 0.6) return savedMessage;
+        }
+
         if (useMessageRotation) {
             return savedMessages[Math.floor(Math.random() * savedMessages.length)];
         } else {
@@ -416,43 +430,49 @@ async function runSpamCycle() {
                 }
 
                 console.log(`[SPAM] [${i+1}/${groups.length}] Mengirim ke: ${group.subject}...`);
-                const msgObjToUse = getNextMessageToUse();
-                const sentMsgId = await sendWithRetry(group.id, msgObjToUse.message, group.participants);
-                
-                if (sentMsgId) {
-                    successCount++;
-                    console.log(`[SPAM] ✅ Berhasil kirim ke ${group.subject} (${successCount} berhasil)`);
-                    
-                    // Jadwalkan auto-delete jika diset
-                    if (autoDeleteMs > 0) {
-                        const targetGroupId = group.id; // Copy by value
-                        setTimeout(async () => {
+                let messagesToSend = [];
+                if (doubleMessageMode && savedMessage && savedMessages.length > 0) {
+                    messagesToSend.push(savedMessage); // Pesan Utama
+                    messagesToSend.push(getNextMessageToUse()); // Pesan Rotasi
+                } else {
+                    messagesToSend.push(getNextMessageToUse());
+                }
+
+                let isAnySuccess = false;
+                for (let j = 0; j < messagesToSend.length; j++) {
+                    const msgObj = messagesToSend[j];
+                    if (j > 0) await new Promise(r => setTimeout(r, doubleMessageDelay));
+
+                    const sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
+                    if (sentMsgId) {
+                        isAnySuccess = true;
+                        // Jadwalkan auto-delete jika diset
+                        if (autoDeleteMs > 0) {
+                            const targetGroupId = group.id;
+                            const messageId = sentMsgId;
+                            setTimeout(async () => {
+                                try {
+                                    await activeSock.sendMessage(targetGroupId, { delete: { remoteJid: targetGroupId, fromMe: true, id: messageId } });
+                                } catch(e) {}
+                            }, autoDeleteMs);
+                        }
+                        if (autoClearChat) {
                             try {
-                                await activeSock.sendMessage(targetGroupId, { delete: { remoteJid: targetGroupId, fromMe: true, id: sentMsgId } });
-                                console.log(`[AUTO-DELETE] ✅ Berhasil menarik pesan di ${group.subject}`);
-                            } catch(e) {
-                                console.log(`[AUTO-DELETE] ❌ Gagal menarik pesan di ${group.subject}: ${e.message}`);
-                            }
-                        }, autoDeleteMs);
-                    }
-                    
-                    if (autoClearChat) {
-                        try {
-                            const ts = Math.floor(Date.now() / 1000);
-                            await activeSock.chatModify({ 
-                                delete: true, 
-                                lastMessages: [{ key: { remoteJid: group.id, id: sentMsgId, fromMe: true }, messageTimestamp: ts }] 
-                            }, group.id);
-                            console.log(`[AUTO-CLEAR] ✅ Berhasil membersihkan chat di ${group.subject}`);
-                        } catch(e) {
-                            console.log(`[AUTO-CLEAR] ❌ Gagal membersihkan chat di ${group.subject}: ${e.message}`);
+                                const ts = Math.floor(Date.now() / 1000);
+                                await activeSock.chatModify({ delete: true, lastMessages: [{ key: { remoteJid: group.id, id: sentMsgId, fromMe: true }, messageTimestamp: ts }] }, group.id);
+                            } catch(e) {}
                         }
                     }
+                }
+
+                if (isAnySuccess) {
+                    successCount++;
+                    console.log(`[SPAM] ✅ Berhasil kirim ke ${group.subject} (${successCount} berhasil)`);
                 } else {
                     failCount++;
-                    failedGroups.push(group.subject);
-                    console.error(`[SPAM] ❌ GAGAL kirim ke ${group.subject} setelah semua retry`);
                 }
+                
+
 
                 // Jeda antar grup
                 if (i < groups.length - 1) {
@@ -1266,25 +1286,43 @@ async function startBot() {
                     }
 
                     console.log(`[SPAM-SEKARANG] Mengirim ke: ${group.subject}...`);
-                    const msgObjToUse = getNextMessageToUse();
-                    const sentMsgId = await sendWithRetry(group.id, msgObjToUse.message, group.participants);
+                    
+                    let messagesToSend = [];
+                    if (doubleMessageMode && savedMessage && savedMessages.length > 0) {
+                        messagesToSend.push(savedMessage);
+                        messagesToSend.push(getNextMessageToUse());
+                    } else {
+                        messagesToSend.push(getNextMessageToUse());
+                    }
 
-                    if (sentMsgId) {
-                        successCount++;
-                        if (autoDeleteMs > 0) {
-                            const targetGroupId = group.id;
-                            setTimeout(async () => {
+                    let isAnySuccess = false;
+                    for (let j = 0; j < messagesToSend.length; j++) {
+                        const msgObj = messagesToSend[j];
+                        if (j > 0) await new Promise(r => setTimeout(r, doubleMessageDelay));
+
+                        const sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
+                        if (sentMsgId) {
+                            isAnySuccess = true;
+                            if (autoDeleteMs > 0) {
+                                const targetGroupId = group.id;
+                                const messageId = sentMsgId;
+                                setTimeout(async () => {
+                                    try {
+                                        await activeSock.sendMessage(targetGroupId, { delete: { remoteJid: targetGroupId, fromMe: true, id: messageId } });
+                                    } catch(e) {}
+                                }, autoDeleteMs);
+                            }
+                            if (autoClearChat) {
                                 try {
-                                    await activeSock.sendMessage(targetGroupId, { delete: { remoteJid: targetGroupId, fromMe: true, id: sentMsgId } });
+                                    const ts = Math.floor(Date.now() / 1000);
+                                    await activeSock.chatModify({ delete: true, lastMessages: [{ key: { remoteJid: group.id, id: sentMsgId, fromMe: true }, messageTimestamp: ts }] }, group.id);
                                 } catch(e) {}
-                            }, autoDeleteMs);
+                            }
                         }
-                        if (autoClearChat) {
-                            try {
-                                const ts = Math.floor(Date.now() / 1000);
-                                await activeSock.chatModify({ delete: true, lastMessages: [{ key: { remoteJid: group.id, id: sentMsgId, fromMe: true }, messageTimestamp: ts }] }, group.id);
-                            } catch(e) {}
-                        }
+                    }
+
+                    if (isAnySuccess) {
+                        successCount++;
                     } else {
                         failCount++;
                     }
@@ -1321,6 +1359,9 @@ async function startBot() {
             statusText += `Rotasi Promosi: ${savedMessages.length > 1 ? `✅ Aktif (${savedMessages.length} pesan)` : '❌ OFF (1 pesan)'}\n`;
             statusText += `Pesan Utama: ${savedMessage ? '✅ Ada' : '❌ Belum di-set'}\n\n`;
             statusText += `Mode Rotasi Pesan: ${useMessageRotation ? '✅ Acak' : '❌ Berurutan'}\n`;
+            statusText += `Prioritas Pesan Utama: ${priorityMainMessage ? '✅ ON (60%)' : '❌ OFF'}\n`;
+            statusText += `Mode 2 Pesan (Double): ${doubleMessageMode ? '✅ ON' : '❌ OFF'}\n`;
+            if (doubleMessageMode) statusText += `Jeda Double Pesan: ${doubleMessageDelay / 1000} detik\n`;
             statusText += `Link Scraper (Mata-mata): ${linkScraper ? '✅ ON' : '❌ OFF'}\n\n`;
             statusText += `Ketik .menu untuk melihat daftar perintah.`;
             await sock.sendMessage(jid, { text: statusText });
@@ -1338,6 +1379,47 @@ async function startBot() {
                 await sock.sendMessage(jid, { text: '❌ *Link Scraper dimatikan!*' });
             } else {
                 await sock.sendMessage(jid, { text: `Status Link Scraper: ${linkScraper ? 'ON' : 'OFF'}\nGunakan: .linkscraper on/off` });
+            }
+        }
+
+        if (command === '.prioritymain') {
+            const opt = args[1]?.toLowerCase();
+            if (opt === 'on') {
+                priorityMainMessage = true;
+                saveConfig();
+                await sock.sendMessage(jid, { text: '✅ *Prioritas Pesan Utama diaktifkan!*\nBot akan lebih sering mengirim pesan utama (.setpesan) dibanding pesan tambahan.' });
+            } else if (opt === 'off') {
+                priorityMainMessage = false;
+                saveConfig();
+                await sock.sendMessage(jid, { text: '❌ *Prioritas Pesan Utama dimatikan!*' });
+            } else {
+                await sock.sendMessage(jid, { text: `Status Prioritas: ${priorityMainMessage ? 'ON' : 'OFF'}\nGunakan: .prioritymain on/off` });
+            }
+        }
+
+        if (command === '.doublemsg') {
+            const opt = args[1]?.toLowerCase();
+            if (opt === 'on') {
+                doubleMessageMode = true;
+                saveConfig();
+                await sock.sendMessage(jid, { text: '✅ *Mode Double Pesan diaktifkan!*\nSetiap grup akan dikirim 2 pesan (1 Pesan Utama + 1 Pesan Rotasi).' });
+            } else if (opt === 'off') {
+                doubleMessageMode = false;
+                saveConfig();
+                await sock.sendMessage(jid, { text: '❌ *Mode Double Pesan dimatikan!*' });
+            } else {
+                await sock.sendMessage(jid, { text: `Status Double Msg: ${doubleMessageMode ? 'ON' : 'OFF'}\nGunakan: .doublemsg on/off` });
+            }
+        }
+
+        if (command === '.setdoublejeda') {
+            const angka = parseInt(args[1]);
+            if (!isNaN(angka) && angka > 0) {
+                doubleMessageDelay = angka * 1000;
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ *Jeda Double Pesan diatur ke ${angka} detik.*` });
+            } else {
+                await sock.sendMessage(jid, { text: '❌ Masukkan angka detik!\nContoh: .setdoublejeda 5' });
             }
         }
 
@@ -1427,7 +1509,10 @@ async function startBot() {
             `.delowner\n` +
             `.listowner\n` +
             `.linkscraper <on/off>\n` +
-            `.setscrapertarget`;
+            `.setscrapertarget\n` +
+            `.prioritymain <on/off>\n` +
+            `.doublemsg <on/off>\n` +
+            `.setdoublejeda <detik>`;
 
             await sock.sendMessage(jid, { text: menuText });
         }
