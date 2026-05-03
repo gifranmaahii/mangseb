@@ -1521,6 +1521,38 @@ async function startBot() {
             }
         }
 
+        if (command === '.editmode') {
+            const opt = args[1]?.toLowerCase();
+            if (['on', 'off', 'auto'].includes(opt)) {
+                editMode = opt;
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ *Edit Mode diatur ke: ${opt.toUpperCase()}*\n${opt === 'auto' ? '_Bot akan otomatis pakai teknik Edit di grup yang ada penjaganya._' : ''}` });
+            } else {
+                await sock.sendMessage(jid, { text: '❌ Gunakan: .editmode on/off/auto' });
+            }
+        }
+
+        if (command === '.usezws') {
+            const opt = args[1]?.toLowerCase();
+            if (opt === 'on') {
+                useZws = true;
+                saveConfig();
+                await sock.sendMessage(jid, { text: '✅ *Zero Width Space diaktifkan!*\nLink akan disisipkan karakter transparan agar lolos bot antilink.' });
+            } else if (opt === 'off') {
+                useZws = false;
+                saveConfig();
+                await sock.sendMessage(jid, { text: '❌ *Zero Width Space dimatikan!*' });
+            } else {
+                await sock.sendMessage(jid, { text: '❌ Gunakan: .usezws on/off' });
+            }
+        }
+
+        if (command === '.clearguarded') {
+            guardedGroups = [];
+            saveConfig();
+            await sock.sendMessage(jid, { text: '✅ *Daftar grup terpantau bot telah direset.*' });
+        }
+
         if (command === '.setscrapertarget') {
             scraperTargetJid = jid;
             saveConfig();
