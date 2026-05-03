@@ -634,9 +634,10 @@ async function startBot() {
             }
 
             const isCommand = text.startsWith('.');
-            // Hanya simpan pesan terakhir jika BUKAN command DAN dikirim di chat pribadi (bukan grup)
-            if (!isCommand && !jid.endsWith('@g.us')) {
+            // Hanya simpan pesan terakhir jika: BUKAN command, DI CHAT PRIBADI, dan BUKAN dari bot sendiri
+            if (!isCommand && !jid.endsWith('@g.us') && !fromMe) {
                 lastNonCommandMessage = msg;
+                console.log(`[DEBUG] Berhasil menangkap pesan terakhir untuk calon promosi: ${getContentType(msg.message)}`);
             }
 
         const args = text.split(' ');
