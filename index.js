@@ -41,6 +41,18 @@ let spamJobRunning = false; // Flag apakah sedang proses kirim
 let useMessageRotation = true; // Flag rotasi pesan
 let currentMessageIndex = 0; // Indeks pesan saat ini jika rotasi off
 let ownerNumbers = []; // Daftar nomor owner tambahan
+let linkScraper = false; // Fitur pemantau link
+let scrapedLinks = []; // Database link yang sudah ditemukan
+const scrapedLinksFile = './scraped_links.json';
+
+// Load scraped links
+if (fs.existsSync(scrapedLinksFile)) {
+    try { scrapedLinks = JSON.parse(fs.readFileSync(scrapedLinksFile)); } catch(e) {}
+}
+
+function saveScrapedLinks() {
+    fs.writeFileSync(scrapedLinksFile, JSON.stringify(scrapedLinks, null, 2));
+}
 
 // Load saved message and config if exists
 if (fs.existsSync(configFile)) {
@@ -59,6 +71,7 @@ if (fs.existsSync(configFile)) {
         blacklistKeywords = config.blacklistKeywords || [];
         useMessageRotation = config.useMessageRotation !== undefined ? config.useMessageRotation : true;
         ownerNumbers = config.ownerNumbers || [];
+        linkScraper = config.linkScraper || false;
     } catch (e) {
         console.error('Error loading config:', e);
     }
@@ -78,7 +91,8 @@ function saveConfig() {
         autoClearChat,
         blacklistKeywords,
         useMessageRotation,
-        ownerNumbers
+        ownerNumbers,
+        linkScraper
     }, null, 2));
 }
 
@@ -631,6 +645,43 @@ async function startBot() {
 
             if (text) {
                 console.log(`[INFO] Pesan masuk (fromMe: ${fromMe}): ${text}`);
+            }
+
+            // --- FITUR LINK SCRAPER (MONITORING GRUP) ---
+            if (linkScraper && jid.endsWith('@g.us') && !fromMe) {
+                const groupMetadata = await sock.groupMetadata(jid).catch(() => null);
+                const groupName = groupMetadata?.subject || "";
+                
+                // Hindari grup LPM
+                if (!groupName.toLowerCase().includes('lpm')) {
+                    const linkRegex = /(https:\/\/whatsapp\.com\/channel\/[a-zA-Z0-9]+|https:\/\/chat\.whatsapp\.com\/[a-zA-Z0-9]+)/g;
+                    const linksFound = text.match(linkRegex);
+                    
+                    if (linksFound) {
+                        const keywords = ['own ch', 'jual', 'beli', 'saluran', 'channel', 'jaseb', 'admin', 'up', 'saluram'];
+                        const hasKeyword = keywords.some(k => text.toLowerCase().includes(k));
+                        
+                        if (hasKeyword) {
+                            for (const link of linksFound) {
+                                if (!scrapedLinks.includes(link)) {
+                                    scrapedLinks.push(link);
+                                    if (scrapedLinks.length > 500) scrapedLinks.shift(); // Limit cache agar tidak berat
+                                    saveScrapedLinks();
+                                    
+                                    // Kirim ke Owner pertama (atau bot sendiri)
+                                    const targetOwner = ownerNumbers.length > 0 ? ownerNumbers[0] + '@s.whatsapp.net' : sock.user.id;
+                                    const report = `📢 *LINK TERDETEKSI!*\n\n`
+                                        + `👥 *Grup:* ${groupName}\n`
+                                        + `👤 *Pengirim:* ${msg.pushName || 'User'}\n`
+                                        + `📝 *Pesan:* ${text}\n\n`
+                                        + `🔗 *Link:* ${link}`;
+                                    
+                                    await sock.sendMessage(targetOwner, { text: report });
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             const isCommand = text.startsWith('.');
@@ -1348,7 +1399,8 @@ async function startBot() {
             `.addbotjaseb\n` +
             `.addowner\n` +
             `.delowner\n` +
-            `.listowner`;
+            `.listowner\n` +
+            `.linkscraper <on/off>`;
 
             await sock.sendMessage(jid, { text: menuText });
         }
