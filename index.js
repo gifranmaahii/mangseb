@@ -1004,11 +1004,12 @@ async function startBot() {
             await sock.sendMessage(jid, { text: `✅ Keyword blacklist berhasil disimpan. Bot tidak akan promosi ke grup yang namanya mengandung kata:\n*${blacklistKeywords.join(', ')}*` });
         }
 
-        if (command === '.setpesan') {
+        if (command === '.setpesan' || command === '.addpesan') {
             const contextInfo = msg.message[messageType]?.contextInfo;
             let targetMsg = null;
             let source = "";
 
+            // 1. Coba ambil dari Reply/Quoted dulu (paling akurat)
             if (contextInfo && contextInfo.quotedMessage) {
                 targetMsg = {
                     key: {
@@ -1020,53 +1021,27 @@ async function startBot() {
                     message: contextInfo.quotedMessage
                 };
                 source = "Reply (Balasan)";
-            } else if (lastNonCommandMessage) {
+            } 
+            // 2. Kalau gak ada reply, ambil dari pesan terakhir di PC
+            else if (lastNonCommandMessage) {
                 targetMsg = JSON.parse(JSON.stringify(lastNonCommandMessage));
                 source = "Pesan Terakhir di Chat Pribadi";
             }
 
             if (targetMsg) {
-                savedMessage = targetMsg;
-                savedMessages = [targetMsg]; // Reset rotasi
-                saveConfig();
-                
-                const type = getContentType(targetMsg.message);
-                await sock.sendMessage(jid, { text: `✅ *BERHASIL DISIMPAN (UTAMA)*\n\n Sumber: ${source}\n Tipe: ${type}\n\nSemua pesan rotasi lama telah dihapus dan diganti dengan pesan ini.` });
+                if (command === '.setpesan') {
+                    savedMessage = targetMsg;
+                    savedMessages = [targetMsg];
+                    saveConfig();
+                    await sock.sendMessage(jid, { text: `✅ *BERHASIL DISIMPAN (UTAMA)*\n\nSumber: ${source}\nTipe: ${getContentType(targetMsg.message)}\n\n_Semua pesan lama dihapus._` });
+                } else {
+                    savedMessages.push(targetMsg);
+                    if (!savedMessage) savedMessage = targetMsg;
+                    saveConfig();
+                    await sock.sendMessage(jid, { text: `✅ *BERHASIL DITAMBAHKAN*\n\nSumber: ${source}\nTipe: ${getContentType(targetMsg.message)}\nTotal: ${savedMessages.length} pesan dalam rotasi.` });
+                }
             } else {
-                await sock.sendMessage(jid, { text: '❌ *GAGAL MENYIMPAN*\n\nPastikan Anda sudah mengirim pesan (teks/gambar/forward) ke chat ini, atau Reply pesan tersebut dengan .setpesan' });
-            }
-        }
-
-        if (command === '.addpesan') {
-            const contextInfo = msg.message[messageType]?.contextInfo;
-            let targetMsg = null;
-            let source = "";
-
-            if (contextInfo && contextInfo.quotedMessage) {
-                targetMsg = {
-                    key: {
-                        remoteJid: jid,
-                        fromMe: contextInfo.participant === sock.user.id,
-                        id: contextInfo.stanzaId,
-                        participant: contextInfo.participant
-                    },
-                    message: contextInfo.quotedMessage
-                };
-                source = "Reply (Balasan)";
-            } else if (lastNonCommandMessage) {
-                targetMsg = JSON.parse(JSON.stringify(lastNonCommandMessage));
-                source = "Pesan Terakhir di Chat Pribadi";
-            }
-
-            if (targetMsg) {
-                savedMessages.push(targetMsg);
-                if (!savedMessage) savedMessage = targetMsg;
-                saveConfig();
-                
-                const type = getContentType(targetMsg.message);
-                await sock.sendMessage(jid, { text: `✅ *BERHASIL DITAMBAHKAN*\n\n Sumber: ${source}\n Tipe: ${type}\n Total: ${savedMessages.length} pesan dalam rotasi.` });
-            } else {
-                await sock.sendMessage(jid, { text: '❌ *GAGAL MENAMBAHKAN*\n\nKirim pesan dulu atau Reply pesan tersebut dengan .addpesan' });
+                await sock.sendMessage(jid, { text: `❌ *GAGAL*\n\nKirim/forward pesan dulu atau Reply pesannya dengan ${command}` });
             }
         }
 
