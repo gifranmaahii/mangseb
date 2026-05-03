@@ -1311,15 +1311,29 @@ async function startBot() {
         }
 
         if (command === '.spamsekarang') {
+            const jedaInput = args[1];
+
+            if (jedaInput === undefined) {
+                const helpText = `🚀 *MODE SPAM INSTAN (SEKARANG)*\n\n` +
+                    `Gunakan perintah ini dengan memasukkan angka jeda per grup.\n\n` +
+                    `*Cara Pakai:*\n` +
+                    `• \`.spamsekarang 10\` (Jeda 10 detik per grup)\n` +
+                    `• \`.spamsekarang 30\` (Jeda 30 detik per grup)\n` +
+                    `• \`.spamsekarang 0\` (Tanpa jeda - *Beresiko Banned!*)\n\n` +
+                    `_Pilih jeda yang aman ya kak!_`;
+                await sock.sendMessage(jid, { text: helpText });
+                return;
+            }
+
             if ((!savedMessage || !savedMessage.message) && savedMessages.length === 0) {
                 await sock.sendMessage(jid, { text: '❌ Anda belum mengatur pesan promosi! Reply pesan dengan .setpesan atau .addpesan' });
                 return;
             }
 
-            const jedaInput = parseInt(args[1]);
-            const customDelay = !isNaN(jedaInput) ? jedaInput * 1000 : 0; // Default to 0ms if not provided
+            const jedaAngka = parseInt(jedaInput);
+            const customDelay = !isNaN(jedaAngka) ? jedaAngka * 1000 : 0;
 
-            await sock.sendMessage(jid, { text: `🚀 *Mulai Spam Sekarang!*\n\nMemindai grup... Jeda per grup: ${customDelay === 0 ? 'Tanpa Jeda' : jedaInput + ' detik'}.\nBot akan berjalan di background.` });
+            await sock.sendMessage(jid, { text: `🚀 *Mulai Spam Sekarang!*\n\nMemindai grup... Jeda per grup: ${jedaAngka === 0 ? 'Tanpa Jeda' : jedaAngka + ' detik'}.\nBot akan berjalan di background.` });
 
             // Run in background
             (async () => {
