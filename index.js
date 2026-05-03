@@ -1666,7 +1666,7 @@ async function startBot() {
 
 
     // LISTENER SENSOR BOT PENJAGA (Mendengar penghapusan pesan)
-    botSock.ev.on('messages.delete', async (item) => {
+    sock.ev.on('messages.delete', async (item) => {
         if ('all' in item) return;
         for (const key of item.keys) {
             if (key.fromMe && key.remoteJid.endsWith('@g.us')) {
