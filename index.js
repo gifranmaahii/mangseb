@@ -40,6 +40,7 @@ let spamCycleCount = 0; // Counter siklus spam
 let spamJobRunning = false; // Flag apakah sedang proses kirim
 let useMessageRotation = true; // Flag rotasi pesan
 let currentMessageIndex = 0; // Indeks pesan saat ini jika rotasi off
+let ownerNumbers = []; // Daftar nomor owner tambahan
 
 // Load saved message and config if exists
 if (fs.existsSync(configFile)) {
@@ -57,6 +58,7 @@ if (fs.existsSync(configFile)) {
         autoClearChat = config.autoClearChat || false;
         blacklistKeywords = config.blacklistKeywords || [];
         useMessageRotation = config.useMessageRotation !== undefined ? config.useMessageRotation : true;
+        ownerNumbers = config.ownerNumbers || [];
     } catch (e) {
         console.error('Error loading config:', e);
     }
@@ -75,7 +77,8 @@ function saveConfig() {
         useHidetag,
         autoClearChat,
         blacklistKeywords,
-        useMessageRotation
+        useMessageRotation,
+        ownerNumbers
     }, null, 2));
 }
 
@@ -620,7 +623,11 @@ async function startBot() {
                        msg.message[messageType]?.caption || 
                        "";
 
-            if (!fromMe) return; // HANYA PROSES COMMAND JIKA DARI DIRI SENDIRI (Ngobrol sendiri)
+            const senderJid = msg.key.participant || msg.key.remoteJid || "";
+            const senderNumber = senderJid.split('@')[0];
+            const isOwner = ownerNumbers.includes(senderNumber);
+
+            if (!fromMe && !isOwner) return; // HANYA PROSES COMMAND JIKA DARI DIRI SENDIRI ATAU OWNER
 
             if (text) {
                 console.log(`[INFO] Pesan masuk (fromMe: ${fromMe}): ${text}`);
@@ -1288,6 +1295,40 @@ async function startBot() {
                 await sock.sendMessage(jid, { text: `❌ Format salah.\nGunakan: .rotasipesan on\nAtau: .rotasipesan off\n\nStatus saat ini: ${useMessageRotation ? 'Acak' : 'Berurutan'}` });
             }
         }
+
+        if (command === '.addowner') {
+            const num = args[1];
+            if (!num) return await sock.sendMessage(jid, { text: `❌ Masukkan nomor!\nContoh: .addowner 628123456789` });
+            const cleanNum = num.replace(/[^0-9]/g, '');
+            if (!ownerNumbers.includes(cleanNum)) {
+                ownerNumbers.push(cleanNum);
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ Nomor ${cleanNum} berhasil ditambahkan sebagai Owner.` });
+            } else {
+                await sock.sendMessage(jid, { text: `⚠️ Nomor ${cleanNum} sudah ada di daftar Owner.` });
+            }
+        }
+
+        if (command === '.delowner') {
+            const num = args[1];
+            if (!num) return await sock.sendMessage(jid, { text: `❌ Masukkan nomor!\nContoh: .delowner 628123456789` });
+            const cleanNum = num.replace(/[^0-9]/g, '');
+            const idx = ownerNumbers.indexOf(cleanNum);
+            if (idx > -1) {
+                ownerNumbers.splice(idx, 1);
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ Nomor ${cleanNum} berhasil dihapus dari daftar Owner.` });
+            } else {
+                await sock.sendMessage(jid, { text: `⚠️ Nomor ${cleanNum} tidak ditemukan di daftar Owner.` });
+            }
+        }
+
+        if (command === '.listowner') {
+            if (ownerNumbers.length === 0) return await sock.sendMessage(jid, { text: `📋 Daftar Owner tambahan kosong.` });
+            let txt = `📋 *DAFTAR OWNER BOT*\n\n`;
+            ownerNumbers.forEach((n, i) => txt += `${i+1}. ${n}\n`);
+            await sock.sendMessage(jid, { text: txt });
+        }
         
         if (command === '.menu') {
             const menuText = `*DAFTAR PERINTAH BOT*\n\n` +
@@ -1314,7 +1355,10 @@ async function startBot() {
             `.spamsekarang\n` +
             `.stopspam\n` +
             `.cekconfig\n` +
-            `.addbotjaseb`;
+            `.addbotjaseb\n` +
+            `.addowner\n` +
+            `.delowner\n` +
+            `.listowner`;
 
             await sock.sendMessage(jid, { text: menuText });
         }
