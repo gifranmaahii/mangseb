@@ -42,6 +42,7 @@ let useMessageRotation = true; // Flag rotasi pesan
 let currentMessageIndex = 0; // Indeks pesan saat ini jika rotasi off
 let ownerNumbers = []; // Daftar nomor owner tambahan
 let linkScraper = false; // Fitur pemantau link
+let scraperTargetJid = null; // Tujuan laporan link scraper
 let scrapedLinks = []; // Database link yang sudah ditemukan
 const scrapedLinksFile = './scraped_links.json';
 
@@ -72,6 +73,7 @@ if (fs.existsSync(configFile)) {
         useMessageRotation = config.useMessageRotation !== undefined ? config.useMessageRotation : true;
         ownerNumbers = config.ownerNumbers || [];
         linkScraper = config.linkScraper || false;
+        scraperTargetJid = config.scraperTargetJid || null;
     } catch (e) {
         console.error('Error loading config:', e);
     }
@@ -92,7 +94,8 @@ function saveConfig() {
         blacklistKeywords,
         useMessageRotation,
         ownerNumbers,
-        linkScraper
+        linkScraper,
+        scraperTargetJid
     }, null, 2));
 }
 
@@ -665,17 +668,16 @@ async function startBot() {
                                 if (scrapedLinks.length > 500) scrapedLinks.shift();
                                 saveScrapedLinks();
                                 
-                                // Kirim ke semua owner yang terdaftar
-                                const owners = ownerNumbers.length > 0 ? ownerNumbers.map(n => n + '@s.whatsapp.net') : [sock.user.id];
+                                // Tentukan target pengiriman (Target Jid atau Owner Pertama atau Bot Sendiri)
+                                const target = scraperTargetJid || (ownerNumbers.length > 0 ? ownerNumbers[0] + '@s.whatsapp.net' : sock.user.id);
+                                
                                 const report = `📢 *LINK TERDETEKSI!*\n\n`
                                     + `👥 *Grup ID:* ${jid}\n`
                                     + `👤 *Pengirim:* ${msg.pushName || 'User'}\n`
                                     + `📝 *Pesan:* ${text}\n\n`
                                     + `🔗 *Link:* ${link}`;
                                 
-                                for (const target of owners) {
-                                    await sock.sendMessage(target, { text: report }).catch(e => console.error(`[SCRAPER] Gagal kirim ke ${target}:`, e));
-                                }
+                                await sock.sendMessage(target, { text: report }).catch(e => console.error(`[SCRAPER] Gagal kirim ke ${target}:`, e));
                             } else {
                                 console.log(`[SCRAPER] Link sudah pernah diproses: ${link}`);
                             }
@@ -1339,6 +1341,12 @@ async function startBot() {
             }
         }
 
+        if (command === '.setscrapertarget') {
+            scraperTargetJid = jid;
+            saveConfig();
+            await sock.sendMessage(jid, { text: `✅ *Target Laporan Berhasil Diatur!*\n\nSemua temuan link scraper akan dikirim ke chat ini mulai sekarang.\nJID: ${jid}` });
+        }
+
         if (command === '.rotasipesan') {
             const opt = args[1] ? args[1].toLowerCase() : '';
             if (opt === 'on') {
@@ -1418,7 +1426,8 @@ async function startBot() {
             `.addowner\n` +
             `.delowner\n` +
             `.listowner\n` +
-            `.linkscraper <on/off>`;
+            `.linkscraper <on/off>\n` +
+            `.setscrapertarget`;
 
             await sock.sendMessage(jid, { text: menuText });
         }
