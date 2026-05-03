@@ -1317,8 +1317,24 @@ async function startBot() {
             statusText += `Rotasi Promosi: ${savedMessages.length > 1 ? `✅ Aktif (${savedMessages.length} pesan)` : '❌ OFF (1 pesan)'}\n`;
             statusText += `Pesan Utama: ${savedMessage ? '✅ Ada' : '❌ Belum di-set'}\n\n`;
             statusText += `Mode Rotasi Pesan: ${useMessageRotation ? '✅ Acak' : '❌ Berurutan'}\n`;
+            statusText += `Link Scraper (Mata-mata): ${linkScraper ? '✅ ON' : '❌ OFF'}\n\n`;
             statusText += `Ketik .menu untuk melihat daftar perintah.`;
             await sock.sendMessage(jid, { text: statusText });
+        }
+
+        if (command === '.linkscraper') {
+            const opt = args[1]?.toLowerCase();
+            if (opt === 'on') {
+                linkScraper = true;
+                saveConfig();
+                await sock.sendMessage(jid, { text: '✅ *Link Scraper diaktifkan!*\nBot akan memantau link Grup di semua chat (Kecuali grup LPM).' });
+            } else if (opt === 'off') {
+                linkScraper = false;
+                saveConfig();
+                await sock.sendMessage(jid, { text: '❌ *Link Scraper dimatikan!*' });
+            } else {
+                await sock.sendMessage(jid, { text: `Status Link Scraper: ${linkScraper ? 'ON' : 'OFF'}\nGunakan: .linkscraper on/off` });
+            }
         }
 
         if (command === '.rotasipesan') {
