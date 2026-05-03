@@ -38,6 +38,8 @@ let activeSock = null; // Socket global, selalu di-update saat reconnect
 let spamOwnerJid = null; // JID owner yang start spam
 let spamCycleCount = 0; // Counter siklus spam
 let spamJobRunning = false; // Flag apakah sedang proses kirim
+let useMessageRotation = true; // Flag rotasi pesan
+let currentMessageIndex = 0; // Indeks pesan saat ini jika rotasi off
 
 // Load saved message and config if exists
 if (fs.existsSync(configFile)) {
@@ -54,6 +56,7 @@ if (fs.existsSync(configFile)) {
         useHidetag = config.useHidetag || false;
         autoClearChat = config.autoClearChat || false;
         blacklistKeywords = config.blacklistKeywords || [];
+        useMessageRotation = config.useMessageRotation !== undefined ? config.useMessageRotation : true;
     } catch (e) {
         console.error('Error loading config:', e);
     }
@@ -71,7 +74,8 @@ function saveConfig() {
         autoDeleteMs,
         useHidetag,
         autoClearChat,
-        blacklistKeywords
+        blacklistKeywords,
+        useMessageRotation
     }, null, 2));
 }
 
@@ -132,6 +136,20 @@ async function handleJadibot(senderJid, type, number = '') {
             });
         }
     });
+}
+
+// Helper: dapatkan pesan selanjutnya
+function getNextMessageToUse() {
+    if (savedMessages.length > 0) {
+        if (useMessageRotation) {
+            return savedMessages[Math.floor(Math.random() * savedMessages.length)];
+        } else {
+            const msg = savedMessages[currentMessageIndex % savedMessages.length];
+            currentMessageIndex++;
+            return msg;
+        }
+    }
+    return savedMessage;
 }
 
 // Helper: proses spin text [A|B|C]
@@ -378,7 +396,7 @@ async function runSpamCycle() {
                 }
 
                 console.log(`[SPAM] [${i+1}/${groups.length}] Mengirim ke: ${group.subject}...`);
-                const msgObjToUse = savedMessages.length > 0 ? savedMessages[Math.floor(Math.random() * savedMessages.length)] : savedMessage;
+                const msgObjToUse = getNextMessageToUse();
                 const sentMsgId = await sendWithRetry(group.id, msgObjToUse.message, group.participants);
                 
                 if (sentMsgId) {
@@ -686,7 +704,7 @@ async function startBot() {
                         await new Promise(r => setTimeout(r, 1500 + Math.random() * 2000)); 
                         await sock.sendPresenceUpdate('paused', targetJid);
 
-                        const msgObjToUse = savedMessages.length > 0 ? savedMessages[Math.floor(Math.random() * savedMessages.length)] : savedMessage;
+                        const msgObjToUse = getNextMessageToUse();
                         
                         let clonedMsg = JSON.parse(JSON.stringify(msgObjToUse.message));
                         
@@ -1196,7 +1214,7 @@ async function startBot() {
                     }
 
                     console.log(`[SPAM-SEKARANG] Mengirim ke: ${group.subject}...`);
-                    const msgObjToUse = savedMessages.length > 0 ? savedMessages[Math.floor(Math.random() * savedMessages.length)] : savedMessage;
+                    const msgObjToUse = getNextMessageToUse();
                     const sentMsgId = await sendWithRetry(group.id, msgObjToUse.message, group.participants);
 
                     if (sentMsgId) {
@@ -1250,8 +1268,25 @@ async function startBot() {
             statusText += `Filter Kata Grup: ${blacklistKeywords.length > 0 ? blacklistKeywords.join(', ') : '❌ OFF'}\n`;
             statusText += `Rotasi Promosi: ${savedMessages.length > 1 ? `✅ Aktif (${savedMessages.length} pesan)` : '❌ OFF (1 pesan)'}\n`;
             statusText += `Pesan Utama: ${savedMessage ? '✅ Ada' : '❌ Belum di-set'}\n\n`;
+            statusText += `Mode Rotasi Pesan: ${useMessageRotation ? '✅ Acak' : '❌ Berurutan'}\n`;
             statusText += `Ketik .menu untuk melihat daftar perintah.`;
             await sock.sendMessage(jid, { text: statusText });
+        }
+
+        if (command === '.rotasipesan') {
+            const opt = args[1] ? args[1].toLowerCase() : '';
+            if (opt === 'on') {
+                useMessageRotation = true;
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ Mode *Rotasi Pesan Acak* diaktifkan!\nBot akan memilih pesan secara acak dari daftar .cekpesan` });
+            } else if (opt === 'off') {
+                useMessageRotation = false;
+                currentMessageIndex = 0; // Reset ke pesan pertama
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ Mode *Rotasi Pesan Acak* dimatikan!\nBot akan mengirim pesan *Sesuai Urutan* (Pesan 1, lalu 2, dst).` });
+            } else {
+                await sock.sendMessage(jid, { text: `❌ Format salah.\nGunakan: .rotasipesan on\nAtau: .rotasipesan off\n\nStatus saat ini: ${useMessageRotation ? 'Acak' : 'Berurutan'}` });
+            }
         }
         
         if (command === '.menu') {
@@ -1266,6 +1301,7 @@ async function startBot() {
             `.setwaktu <angka> <menit/jam>\n` +
             `.setjeda <angka> <detik>\n` +
             `.sethidetag <on/off>\n` +
+            `.rotasipesan <on/off>\n` +
             `.autoclear <on/off>\n` +
             `.setautodelete <angka> <detik/menit> | off\n` +
             `.setsleep <jamMulai> <jamSelesai> | off\n` +
@@ -1316,7 +1352,7 @@ async function startBot() {
             await sock.sendMessage(jid, { text: `🔄 Mengetes kirim ke grup: *${targetGroupName}*...` });
             try {
                 console.log(`[TES] Mencoba kirim ke: ${targetGroupName} (${targetGroupJid})`);
-                const msgObjToUse = savedMessages.length > 0 ? savedMessages[Math.floor(Math.random() * savedMessages.length)] : savedMessage;
+                const msgObjToUse = getNextMessageToUse();
                 // Menggunakan relayMessage untuk bypass validasi media dan menjaga metadata asli (View Channel)
                 await sock.relayMessage(targetGroupJid, msgObjToUse.message, { messageId: sock.generateMessageTag() });
                 console.log(`[TES] Berhasil dikirim ke: ${targetGroupName}`);
