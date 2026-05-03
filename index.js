@@ -649,37 +649,39 @@ async function startBot() {
 
             // --- FITUR LINK SCRAPER (MONITORING GRUP) ---
             if (linkScraper && jid.endsWith('@g.us') && !fromMe) {
-                const groupMetadata = await sock.groupMetadata(jid).catch(() => null);
-                const groupName = groupMetadata?.subject || "";
+                const linkRegex = /https:\/\/chat\.whatsapp\.com\/[a-zA-Z0-9]+/g;
+                const linksFound = text.match(linkRegex);
                 
-                // Hindari grup LPM
-                if (!groupName.toLowerCase().includes('lpm')) {
-                    const linkRegex = /https:\/\/chat\.whatsapp\.com\/[a-zA-Z0-9]+/g;
-                    const linksFound = text.match(linkRegex);
+                if (linksFound) {
+                    console.log(`[SCRAPER] Terdeteksi link di grup ${jid}, mengecek kata kunci...`);
+                    const keywords = ['own ch', 'jual', 'beli', 'saluran', 'channel', 'jaseb', 'admin', 'up', 'saluram', 'ch'];
+                    const hasKeyword = keywords.some(k => text.toLowerCase().includes(k));
                     
-                    if (linksFound) {
-                        const keywords = ['own ch', 'jual', 'beli', 'saluran', 'channel', 'jaseb', 'admin', 'up', 'saluram'];
-                        const hasKeyword = keywords.some(k => text.toLowerCase().includes(k));
-                        
-                        if (hasKeyword) {
-                            for (const link of linksFound) {
-                                if (!scrapedLinks.includes(link)) {
-                                    scrapedLinks.push(link);
-                                    if (scrapedLinks.length > 500) scrapedLinks.shift(); // Limit cache agar tidak berat
-                                    saveScrapedLinks();
-                                    
-                                    // Kirim ke Owner pertama (atau bot sendiri)
-                                    const targetOwner = ownerNumbers.length > 0 ? ownerNumbers[0] + '@s.whatsapp.net' : sock.user.id;
-                                    const report = `📢 *LINK TERDETEKSI!*\n\n`
-                                        + `👥 *Grup:* ${groupName}\n`
-                                        + `👤 *Pengirim:* ${msg.pushName || 'User'}\n`
-                                        + `📝 *Pesan:* ${text}\n\n`
-                                        + `🔗 *Link:* ${link}`;
-                                    
-                                    await sock.sendMessage(targetOwner, { text: report });
+                    if (hasKeyword) {
+                        for (const link of linksFound) {
+                            if (!scrapedLinks.includes(link)) {
+                                console.log(`[SCRAPER] Link baru ditemukan: ${link}. Mengirim ke owner...`);
+                                scrapedLinks.push(link);
+                                if (scrapedLinks.length > 500) scrapedLinks.shift();
+                                saveScrapedLinks();
+                                
+                                // Kirim ke semua owner yang terdaftar
+                                const owners = ownerNumbers.length > 0 ? ownerNumbers.map(n => n + '@s.whatsapp.net') : [sock.user.id];
+                                const report = `📢 *LINK TERDETEKSI!*\n\n`
+                                    + `👥 *Grup ID:* ${jid}\n`
+                                    + `👤 *Pengirim:* ${msg.pushName || 'User'}\n`
+                                    + `📝 *Pesan:* ${text}\n\n`
+                                    + `🔗 *Link:* ${link}`;
+                                
+                                for (const target of owners) {
+                                    await sock.sendMessage(target, { text: report }).catch(e => console.error(`[SCRAPER] Gagal kirim ke ${target}:`, e));
                                 }
+                            } else {
+                                console.log(`[SCRAPER] Link sudah pernah diproses: ${link}`);
                             }
                         }
+                    } else {
+                        console.log(`[SCRAPER] Tidak ada kata kunci yang cocok dalam pesan.`);
                     }
                 }
             }
