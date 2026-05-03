@@ -179,9 +179,6 @@ async function handleJadibot(senderJid, type, number = '') {
     });
 }
 
-    });
-}
-
 // Helper: Sisipkan Zero Width Space ke Link
 function injectZws(text) {
     if (!text || !useZws) return text;
