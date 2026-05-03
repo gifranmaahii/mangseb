@@ -634,7 +634,8 @@ async function startBot() {
             }
 
             const isCommand = text.startsWith('.');
-            if (!isCommand) {
+            // Hanya simpan pesan terakhir jika BUKAN command DAN dikirim di chat pribadi (bukan grup)
+            if (!isCommand && !jid.endsWith('@g.us')) {
                 lastNonCommandMessage = msg;
             }
 
@@ -1004,8 +1005,11 @@ async function startBot() {
 
         if (command === '.setpesan') {
             const contextInfo = msg.message[messageType]?.contextInfo;
+            let targetMsg = null;
+            let source = "";
+
             if (contextInfo && contextInfo.quotedMessage) {
-                savedMessage = {
+                targetMsg = {
                     key: {
                         remoteJid: jid,
                         fromMe: contextInfo.participant === sock.user.id,
@@ -1014,25 +1018,31 @@ async function startBot() {
                     },
                     message: contextInfo.quotedMessage
                 };
-                savedMessages = [savedMessage]; // Reset rotasi pesan
-                saveConfig();
-                await sock.sendMessage(jid, { text: '✅ Pesan promosi berhasil disimpan dari reply! (Pesan lama dihapus)' });
+                source = "Reply (Balasan)";
             } else if (lastNonCommandMessage) {
-                // Simpan pesan utuh (deep copy) untuk menghindari masalah referensi
-                savedMessage = JSON.parse(JSON.stringify(lastNonCommandMessage));
-                savedMessages = [savedMessage];
+                targetMsg = JSON.parse(JSON.stringify(lastNonCommandMessage));
+                source = "Pesan Terakhir di Chat Pribadi";
+            }
+
+            if (targetMsg) {
+                savedMessage = targetMsg;
+                savedMessages = [targetMsg]; // Reset rotasi
                 saveConfig();
-                await sock.sendMessage(jid, { text: '✅ Pesan promosi berhasil disimpan dari pesan terakhir yang dikirim!\n\n*(Cocok untuk forward dari Saluran karena sumber/metadata saluran tidak akan hilang)*' });
+                
+                const type = getContentType(targetMsg.message);
+                await sock.sendMessage(jid, { text: `✅ *BERHASIL DISIMPAN (UTAMA)*\n\n Sumber: ${source}\n Tipe: ${type}\n\nSemua pesan rotasi lama telah dihapus dan diganti dengan pesan ini.` });
             } else {
-                await sock.sendMessage(jid, { text: '❌ Anda belum mengirim pesan apapun sebelumnya untuk disave.\n\n*Cara terbaik:* Forward pesan dari saluran ke chat ini, lalu kirim .setpesan (jangan di-reply).' });
+                await sock.sendMessage(jid, { text: '❌ *GAGAL MENYIMPAN*\n\nPastikan Anda sudah mengirim pesan (teks/gambar/forward) ke chat ini, atau Reply pesan tersebut dengan .setpesan' });
             }
         }
 
         if (command === '.addpesan') {
             const contextInfo = msg.message[messageType]?.contextInfo;
-            let newMsg = null;
+            let targetMsg = null;
+            let source = "";
+
             if (contextInfo && contextInfo.quotedMessage) {
-                newMsg = {
+                targetMsg = {
                     key: {
                         remoteJid: jid,
                         fromMe: contextInfo.participant === sock.user.id,
@@ -1041,17 +1051,21 @@ async function startBot() {
                     },
                     message: contextInfo.quotedMessage
                 };
+                source = "Reply (Balasan)";
             } else if (lastNonCommandMessage) {
-                newMsg = JSON.parse(JSON.stringify(lastNonCommandMessage));
+                targetMsg = JSON.parse(JSON.stringify(lastNonCommandMessage));
+                source = "Pesan Terakhir di Chat Pribadi";
             }
 
-            if (newMsg) {
-                savedMessages.push(newMsg);
-                if (!savedMessage) savedMessage = newMsg;
+            if (targetMsg) {
+                savedMessages.push(targetMsg);
+                if (!savedMessage) savedMessage = targetMsg;
                 saveConfig();
-                await sock.sendMessage(jid, { text: `✅ Pesan promosi berhasil ditambahkan!\n(Total ada ${savedMessages.length} pesan yang akan dirotasi secara acak)` });
+                
+                const type = getContentType(targetMsg.message);
+                await sock.sendMessage(jid, { text: `✅ *BERHASIL DITAMBAHKAN*\n\n Sumber: ${source}\n Tipe: ${type}\n Total: ${savedMessages.length} pesan dalam rotasi.` });
             } else {
-                await sock.sendMessage(jid, { text: '❌ Reply pesan atau kirim pesan dulu sebelum ketik .addpesan' });
+                await sock.sendMessage(jid, { text: '❌ *GAGAL MENAMBAHKAN*\n\nKirim pesan dulu atau Reply pesan tersebut dengan .addpesan' });
             }
         }
 
