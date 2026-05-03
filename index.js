@@ -1157,6 +1157,77 @@ async function startBot() {
             await sock.sendMessage(jid, { text: `✅ Spam promosi mulai dijalankan!\nJadwal: ${cronExpression}` });
         }
 
+        if (command === '.spamsekarang') {
+            if ((!savedMessage || !savedMessage.message) && savedMessages.length === 0) {
+                await sock.sendMessage(jid, { text: '❌ Anda belum mengatur pesan promosi! Reply pesan dengan .setpesan atau .addpesan' });
+                return;
+            }
+
+            const jedaInput = parseInt(args[1]);
+            const customDelay = !isNaN(jedaInput) ? jedaInput * 1000 : 0; // Default to 0ms if not provided
+
+            await sock.sendMessage(jid, { text: `🚀 *Mulai Spam Sekarang!*\n\nMemindai grup... Jeda per grup: ${customDelay === 0 ? 'Tanpa Jeda' : jedaInput + ' detik'}.\nBot akan berjalan di background.` });
+
+            // Run in background
+            (async () => {
+                const groupMetadata = await sock.groupFetchAllParticipating();
+                const groups = Object.values(groupMetadata).reverse();
+                
+                let successCount = 0;
+                let failCount = 0;
+                let skipCount = 0;
+
+                for (let i = 0; i < groups.length; i++) {
+                    const group = groups[i];
+                    const isAdminOnly = group.announce;
+                    const isAnnounceGroup = group.isCommunityAnnounce;
+
+                    if (blacklistedGroups.includes(group.id)) { skipCount++; continue; }
+                    if (isAnnounceGroup) { skipCount++; continue; }
+                    
+                    if (blacklistKeywords.length > 0) {
+                        const groupNameLower = group.subject.toLowerCase();
+                        if (blacklistKeywords.some(kw => groupNameLower.includes(kw))) { skipCount++; continue; }
+                    }
+
+                    if (isAdminOnly) {
+                        const me = group.participants.find(p => jidNormalizedUser(p.id) === jidNormalizedUser(activeSock.user.id));
+                        if (!me?.admin) { skipCount++; continue; }
+                    }
+
+                    console.log(`[SPAM-SEKARANG] Mengirim ke: ${group.subject}...`);
+                    const msgObjToUse = savedMessages.length > 0 ? savedMessages[Math.floor(Math.random() * savedMessages.length)] : savedMessage;
+                    const sentMsgId = await sendWithRetry(group.id, msgObjToUse.message, group.participants);
+
+                    if (sentMsgId) {
+                        successCount++;
+                        if (autoDeleteMs > 0) {
+                            const targetGroupId = group.id;
+                            setTimeout(async () => {
+                                try {
+                                    await activeSock.sendMessage(targetGroupId, { delete: { remoteJid: targetGroupId, fromMe: true, id: sentMsgId } });
+                                } catch(e) {}
+                            }, autoDeleteMs);
+                        }
+                        if (autoClearChat) {
+                            try {
+                                const ts = Math.floor(Date.now() / 1000);
+                                await activeSock.chatModify({ delete: true, lastMessages: [{ key: { remoteJid: group.id, id: sentMsgId, fromMe: true }, messageTimestamp: ts }] }, group.id);
+                            } catch(e) {}
+                        }
+                    } else {
+                        failCount++;
+                    }
+
+                    if (customDelay > 0 && i < groups.length - 1) {
+                        await new Promise(resolve => setTimeout(resolve, customDelay));
+                    }
+                }
+
+                await sock.sendMessage(jid, { text: `✅ *LAPORAN SPAM SEKARANG SELESAI*\n\n📊 *Hasil:*\n✔️ Berhasil: ${successCount}\n❌ Gagal: ${failCount}\n⏭️ Dilewati: ${skipCount}` });
+            })();
+        }
+
         if (command === '.stopspam') {
             if (!isSpamming) {
                 await sock.sendMessage(jid, { text: '⚠️ Spam tidak sedang berjalan.' });
@@ -1204,6 +1275,7 @@ async function startBot() {
             `.unblacklist\n` +
             `.teskirim\n` +
             `.startspam\n` +
+            `.spamsekarang\n` +
             `.stopspam\n` +
             `.cekconfig\n` +
             `.addbotjaseb`;
