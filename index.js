@@ -47,6 +47,9 @@ let priorityMainMessage = false; // Prioritas pesan utama (.setpesan)
 let mainMessagePriorityPercent = 60; // Persentase prioritas pesan utama (0-100)
 let doubleMessageMode = false; // Kirim 2 pesan per grup (utama + rotasi)
 let doubleMessageDelay = 5000; // Jeda antar pesan dalam grup (ms)
+let useZws = false; // Gunakan Zero Width Space pada link
+let editMode = 'off'; // off, on, auto
+let guardedGroups = []; // Daftar grup yang terdeteksi ada bot penjaga
 let scrapedLinks = []; // Database link yang sudah ditemukan
 const scrapedLinksFile = './scraped_links.json';
 
@@ -82,6 +85,9 @@ if (fs.existsSync(configFile)) {
         mainMessagePriorityPercent = config.mainMessagePriorityPercent !== undefined ? config.mainMessagePriorityPercent : 60;
         doubleMessageMode = config.doubleMessageMode || false;
         doubleMessageDelay = config.doubleMessageDelay || 5000;
+        useZws = config.useZws || false;
+        editMode = config.editMode || 'off';
+        guardedGroups = config.guardedGroups || [];
     } catch (e) {
         console.error('Error loading config:', e);
     }
@@ -107,7 +113,10 @@ function saveConfig() {
         priorityMainMessage,
         mainMessagePriorityPercent,
         doubleMessageMode,
-        doubleMessageDelay
+        doubleMessageDelay,
+        useZws,
+        editMode,
+        guardedGroups
     }, null, 2));
 }
 
@@ -170,22 +179,49 @@ async function handleJadibot(senderJid, type, number = '') {
     });
 }
 
+    });
+}
+
+// Helper: Sisipkan Zero Width Space ke Link
+function injectZws(text) {
+    if (!text || !useZws) return text;
+    // Menyisipkan \u200B setelah https://chat.whatsapp.com/
+    return text.replace(/(https:\/\/chat\.whatsapp\.com\/)/g, "$1\u200B");
+}
+
 // Helper: dapatkan pesan selanjutnya
 function getNextMessageToUse() {
     if (savedMessages.length > 0) {
+        let selectedMsg;
         // Jika prioritas pesan utama ON, gunakan peluang berdasarkan persentase yang di-set
         if (priorityMainMessage && savedMessage) {
             const chance = mainMessagePriorityPercent / 100;
-            if (Math.random() < chance) return savedMessage;
+            if (Math.random() < chance) {
+                selectedMsg = JSON.parse(JSON.stringify(savedMessage));
+            }
         }
 
-        if (useMessageRotation) {
-            return savedMessages[Math.floor(Math.random() * savedMessages.length)];
-        } else {
-            const msg = savedMessages[currentMessageIndex % savedMessages.length];
-            currentMessageIndex++;
-            return msg;
+        if (!selectedMsg) {
+            if (useMessageRotation) {
+                selectedMsg = JSON.parse(JSON.stringify(savedMessages[Math.floor(Math.random() * savedMessages.length)]));
+            } else {
+                selectedMsg = JSON.parse(JSON.stringify(savedMessages[currentMessageIndex % savedMessages.length]));
+                currentMessageIndex++;
+            }
         }
+
+        // Terapkan Spin Text dan ZWS jika aktif
+        if (selectedMsg && selectedMsg.message) {
+            const type = getContentType(selectedMsg.message);
+            if (type === 'conversation') {
+                selectedMsg.message.conversation = injectZws(processSpinText(selectedMsg.message.conversation));
+            } else if (selectedMsg.message[type]?.caption) {
+                selectedMsg.message[type].caption = injectZws(processSpinText(selectedMsg.message[type].caption));
+            } else if (selectedMsg.message.extendedTextMessage?.text) {
+                selectedMsg.message.extendedTextMessage.text = injectZws(processSpinText(selectedMsg.message.extendedTextMessage.text));
+            }
+        }
+        return selectedMsg;
     }
     return savedMessage;
 }
@@ -436,18 +472,37 @@ async function runSpamCycle() {
                 console.log(`[SPAM] [${i+1}/${groups.length}] Mengirim ke: ${group.subject}...`);
                 let messagesToSend = [];
                 if (doubleMessageMode && savedMessage && savedMessages.length > 0) {
-                    messagesToSend.push(savedMessage); // Pesan Utama
-                    messagesToSend.push(getNextMessageToUse()); // Pesan Rotasi
+                    messagesToSend.push(JSON.parse(JSON.stringify(savedMessage)));
+                    messagesToSend.push(getNextMessageToUse());
                 } else {
                     messagesToSend.push(getNextMessageToUse());
                 }
 
                 let isAnySuccess = false;
                 for (let j = 0; j < messagesToSend.length; j++) {
-                    const msgObj = messagesToSend[j];
+                    let msgObj = messagesToSend[j];
                     if (j > 0) await new Promise(r => setTimeout(r, doubleMessageDelay));
 
-                    const sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
+                    // LOGIKA EDIT MODE
+                    const isGuarded = guardedGroups.includes(group.id);
+                    const shouldEdit = editMode === 'on' || (editMode === 'auto' && isGuarded);
+
+                    let sentMsgId;
+                    if (shouldEdit) {
+                        const safeTexts = ['Izin share ya kak..', 'Permisi admin..', 'Pagi kak, titip pesan ya', 'Bantu share info ya'];
+                        const safeText = safeTexts[Math.floor(Math.random() * safeTexts.length)];
+                        const firstMsg = await sock.sendMessage(group.id, { text: safeText });
+                        await new Promise(r => setTimeout(r, 2000)); // Jeda sebelum edit
+                        
+                        const type = getContentType(msgObj.message);
+                        const content = msgObj.message.conversation || msgObj.message[type]?.caption || msgObj.message.extendedTextMessage?.text || "";
+                        
+                        await sock.sendMessage(group.id, { edit: firstMsg.key, text: content });
+                        sentMsgId = firstMsg.key.id;
+                    } else {
+                        sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
+                    }
+
                     if (sentMsgId) {
                         isAnySuccess = true;
                         // Jadwalkan auto-delete jika diset
@@ -1304,7 +1359,24 @@ async function startBot() {
                         const msgObj = messagesToSend[j];
                         if (j > 0) await new Promise(r => setTimeout(r, doubleMessageDelay));
 
-                        const sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
+                        // LOGIKA EDIT MODE
+                        const isGuarded = guardedGroups.includes(group.id);
+                        const shouldEdit = editMode === 'on' || (editMode === 'auto' && isGuarded);
+
+                        let sentMsgId;
+                        if (shouldEdit) {
+                            const safeTexts = ['Izin share ya kak..', 'Permisi admin..', 'Pagi kak, titip pesan ya', 'Bantu share info ya'];
+                            const safeText = safeTexts[Math.floor(Math.random() * safeTexts.length)];
+                            const firstMsg = await sock.sendMessage(group.id, { text: safeText });
+                            await new Promise(r => setTimeout(r, 2000));
+                            const type = getContentType(msgObj.message);
+                            const content = msgObj.message.conversation || msgObj.message[type]?.caption || msgObj.message.extendedTextMessage?.text || "";
+                            await sock.sendMessage(group.id, { edit: firstMsg.key, text: content });
+                            sentMsgId = firstMsg.key.id;
+                        } else {
+                            sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
+                        }
+
                         if (sentMsgId) {
                             isAnySuccess = true;
                             if (autoDeleteMs > 0) {
@@ -1494,41 +1566,45 @@ async function startBot() {
             await sock.sendMessage(jid, { text: txt });
         }
         
-        if (command === '.menu') {
-            const menuText = `*DAFTAR PERINTAH BOT*\n\n` +
-            `.listgrup\n` +
-            `.setpesan\n` +
-            `.addpesan\n` +
-            `.cekpesan\n` +
-            `.delpesan\n` +
-            `.addvcard <nama>|<nomor>\n` +
-            `.pushkontak\n` +
-            `.setwaktu <angka> <menit/jam>\n` +
-            `.setjeda <angka> <detik>\n` +
-            `.sethidetag <on/off>\n` +
-            `.rotasipesan <on/off>\n` +
-            `.autoclear <on/off>\n` +
-            `.setautodelete <angka> <detik/menit> | off\n` +
-            `.setsleep <jamMulai> <jamSelesai> | off\n` +
-            `.cleangrup\n` +
-            `.blacklist\n` +
-            `.blacklistkata <kata1, kata2>\n` +
-            `.unblacklist\n` +
-            `.teskirim\n` +
-            `.startspam\n` +
-            `.spamsekarang\n` +
-            `.stopspam\n` +
-            `.cekconfig\n` +
-            `.addbotjaseb\n` +
-            `.addowner\n` +
-            `.delowner\n` +
-            `.listowner\n` +
-            `.linkscraper <on/off>\n` +
-            `.setscrapertarget\n` +
-            `.prioritymain <on/off>\n` +
-            `.setpriority <0-100>\n` +
-            `.doublemsg <on/off>\n` +
-            `.setdoublejeda <detik>`;
+        if (command === '.menu' || command === '.help') {
+            const menuText = `┏━『 *MANGSEB BOT* 』
+┃
+┣⌬ *.listgrup* (Cek ID Grup)
+┣⌬ *.setpesan* (Set pesan utama)
+┣⌬ *.addpesan* (Tambah rotasi)
+┣⌬ *.cekpesan* (Lihat daftar)
+┣⌬ *.delpesan* (Hapus pesan)
+┣⌬ *.prioritymain* <on/off>
+┣⌬ *.setpriority* <0-100>
+┣⌬ *.rotasipesan* <on/off>
+┣⌬ *.doublemsg* <on/off>
+┣⌬ *.setdoublejeda* <detik>
+┃
+┣━『 *SAFETY & BYPASS* 』
+┃
+┣⌬ *.editmode* <on/off/auto>
+┣⌬ *.usezws* <on/off> (Anti-Link)
+┣⌬ *.clearguarded* (Reset sensor)
+┣⌬ *.setjeda* <angka> <detik>
+┣⌬ *.sethidetag* <on/off>
+┣⌬ *.setsleep* <jam1> <jam2>
+┣⌬ *.autoclear* <on/off>
+┃
+┣━『 *PENGATURAN* 』
+┃
+┣⌬ *.cekconfig* (Cek status)
+┣⌬ *.startspam* (Mulai jadwal)
+┣⌬ *.stopspam* (Berhenti)
+┣⌬ *.spamsekarang* (Instan)
+┣⌬ *.teskirim* (Tes 1 grup)
+┃
+┣━『 *OWNER & TOOLS* 』
+┃
+┣⌬ *.addowner* / *.delowner*
+┣⌬ *.linkscraper* <on/off>
+┣⌬ *.setscrapertarget*
+┃
+┗━━━━━━━◧`;
 
             await sock.sendMessage(jid, { text: menuText });
         }
@@ -1581,6 +1657,21 @@ async function startBot() {
     }
 });
 
+
+    // LISTENER SENSOR BOT PENJAGA (Mendengar penghapusan pesan)
+    botSock.ev.on('messages.delete', async (item) => {
+        if ('all' in item) return;
+        for (const key of item.keys) {
+            if (key.fromMe && key.remoteJid.endsWith('@g.us')) {
+                // Jika pesan kita di grup dihapus oleh orang lain (bukan kita sendiri via bot)
+                if (!guardedGroups.includes(key.remoteJid)) {
+                    guardedGroups.push(key.remoteJid);
+                    saveConfig();
+                    console.log(`[SENSOR] ⚠️ Bot penjaga terdeteksi di grup: ${key.remoteJid}. Grup ditandai.`);
+                }
+            }
+        }
+    });
 
 }
 
