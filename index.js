@@ -654,7 +654,7 @@ async function startBot() {
                 
                 // Hindari grup LPM
                 if (!groupName.toLowerCase().includes('lpm')) {
-                    const linkRegex = /(https:\/\/whatsapp\.com\/channel\/[a-zA-Z0-9]+|https:\/\/chat\.whatsapp\.com\/[a-zA-Z0-9]+)/g;
+                    const linkRegex = /https:\/\/chat\.whatsapp\.com\/[a-zA-Z0-9]+/g;
                     const linksFound = text.match(linkRegex);
                     
                     if (linksFound) {
