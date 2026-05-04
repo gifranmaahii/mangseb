@@ -525,10 +525,13 @@ async function runSpamCycle() {
                         await sock.sendMessage(group.id, { edit: firstMsg.key, text: originalContent });
                         console.log(`[BYPASS] ✅ Berhasil edit & sisipkan link di ${group.subject}`);
                         sentMsgId = firstMsg.key.id;
-                        sentMessagesRecord.set(sentMsgId, group.id);
+                        sentMessagesRecord.set(sentMsgId, { groupId: group.id, timestamp: Date.now() });
                         setTimeout(() => sentMessagesRecord.delete(sentMsgId), 600000);
                     } else {
                         sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
+                        if (sentMsgId) {
+                            sentMessagesRecord.set(sentMsgId, { groupId: group.id, timestamp: Date.now() });
+                        }
                     }
 
                     if (sentMsgId) {
@@ -1425,10 +1428,13 @@ async function startBot() {
                             
                             await sock.sendMessage(group.id, { edit: firstMsg.key, text: originalContent });
                             sentMsgId = firstMsg.key.id;
-                            sentMessagesRecord.set(sentMsgId, group.id);
+                            sentMessagesRecord.set(sentMsgId, { groupId: group.id, timestamp: Date.now() });
                             setTimeout(() => sentMessagesRecord.delete(sentMsgId), 600000);
                         } else {
                             sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
+                            if (sentMsgId) {
+                                sentMessagesRecord.set(sentMsgId, { groupId: group.id, timestamp: Date.now() });
+                            }
                         }
 
                         if (sentMsgId) {
@@ -1747,6 +1753,7 @@ async function startBot() {
                 const sentId = await sendWithRetry(targetJid, msgObjToUse.message, targetGroup.participants);
                 
                 if (sentId) {
+                    sentMessagesRecord.set(sentId, { groupId: targetJid, timestamp: Date.now() });
                     await sock.sendMessage(jid, { text: `✅ *BERHASIL!*\nTes kirim ke grup *${targetName}* sukses.` });
                 } else {
                     throw new Error("Gagal mendapatkan ID pesan setelah pengiriman.");
