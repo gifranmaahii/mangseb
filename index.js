@@ -227,6 +227,7 @@ function getNextMessageToUse() {
 
         // Terapkan Spin Text dan ZWS jika aktif
         if (selectedMsg && selectedMsg.message) {
+            // Gunakan struktur pesan langsung tanpa cloning berat
             const type = getContentType(selectedMsg.message);
             if (type === 'conversation') {
                 selectedMsg.message.conversation = injectZws(processSpinText(selectedMsg.message.conversation));
@@ -656,7 +657,10 @@ async function startBot() {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
-        generateHighQualityLinkPreview: true,
+        printQRInTerminal: loginMethod === 'qr',
+        generateHighQualityLinkPreview: false, // Matikan untuk hemat RAM
+        syncFullHistory: false, // JANGAN download chat lama agar ringan
+        retryRequestDelayMs: 5000,
     });
 
     let loginMethod = 'qr';
@@ -753,8 +757,10 @@ async function startBot() {
 
             if (!fromMe && !isOwner) return; // HANYA PROSES COMMAND JIKA DARI DIRI SENDIRI ATAU OWNER
 
-            if (text) {
-                console.log(`[INFO] Pesan masuk (fromMe: ${fromMe}): ${text}`);
+            // --- LOGGING FILTER ---
+            const isCommand = text.startsWith('.');
+            if (isCommand || !jid.endsWith('@g.us')) {
+                console.log(`[MSG] From: ${senderNumber} | Text: ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`);
             }
 
             // --- FITUR LINK SCRAPER (MONITORING GRUP) ---
