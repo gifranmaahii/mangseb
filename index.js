@@ -758,7 +758,6 @@ async function startBot() {
             if (!fromMe && !isOwner) return; // HANYA PROSES COMMAND JIKA DARI DIRI SENDIRI ATAU OWNER
 
             // --- LOGGING FILTER ---
-            const isCommand = text.startsWith('.');
             if (isCommand || !jid.endsWith('@g.us')) {
                 console.log(`[MSG] From: ${senderNumber} | Text: ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`);
             }
