@@ -650,6 +650,7 @@ async function startBot() {
     
     console.log(`Menggunakan WA v${version.join('.')}, isLatest: ${isLatest}`);
 
+    let loginMethod = 'qr';
     const sock = makeWASocket({
         version,
         logger,
@@ -657,13 +658,11 @@ async function startBot() {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
-        printQRInTerminal: loginMethod === 'qr',
-        generateHighQualityLinkPreview: false, // Matikan untuk hemat RAM
-        syncFullHistory: false, // JANGAN download chat lama agar ringan
+        printQRInTerminal: true, // Biarkan true agar QR muncul jika perlu
+        generateHighQualityLinkPreview: false,
+        syncFullHistory: false,
         retryRequestDelayMs: 5000,
     });
-
-    let loginMethod = 'qr';
 
     if (!sock.authState.creds.registered) {
         loginMethod = 'prompt'; // Sedang memilih
