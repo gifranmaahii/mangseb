@@ -308,30 +308,25 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                 await activeSock.relayMessage(groupId, clonedMsg, { messageId: messageId });
             } else {
                 // Attempt 3: fallback pakai sendMessage (lebih reliable)
+                let result;
                 if (clonedMsg.conversation) {
-                    await activeSock.sendMessage(groupId, { text: clonedMsg.conversation });
+                    result = await activeSock.sendMessage(groupId, { text: clonedMsg.conversation });
                 } else if (clonedMsg.extendedTextMessage) {
-                    await activeSock.sendMessage(groupId, { text: clonedMsg.extendedTextMessage.text });
+                    result = await activeSock.sendMessage(groupId, { text: clonedMsg.extendedTextMessage.text });
                 } else if (clonedMsg.contactMessage) {
-                    await activeSock.sendMessage(groupId, { contacts: { displayName: clonedMsg.contactMessage.displayName, contacts: [{ vcard: clonedMsg.contactMessage.vcard }] } });
+                    result = await activeSock.sendMessage(groupId, { contacts: { displayName: clonedMsg.contactMessage.displayName, contacts: [{ vcard: clonedMsg.contactMessage.vcard }] } });
                 } else if (clonedMsg.imageMessage) {
                     const img = clonedMsg.imageMessage;
-                    await activeSock.sendMessage(groupId, {
-                        image: { url: img.url },
-                        caption: img.caption || '',
-                        mimetype: img.mimetype
-                    });
+                    result = await activeSock.sendMessage(groupId, { image: { url: img.url }, caption: img.caption || '', mimetype: img.mimetype });
                 } else if (clonedMsg.videoMessage) {
                     const vid = clonedMsg.videoMessage;
-                    await activeSock.sendMessage(groupId, {
-                        video: { url: vid.url },
-                        caption: vid.caption || '',
-                        mimetype: vid.mimetype
-                    });
+                    result = await activeSock.sendMessage(groupId, { video: { url: vid.url }, caption: vid.caption || '', mimetype: vid.mimetype });
                 } else {
-                    // Last resort: relay lagi
                     await activeSock.relayMessage(groupId, clonedMsg, { messageId: messageId });
                 }
+                
+                // Update messageId jika pakai sendMessage agar sinkron dengan Sensor
+                if (result?.key?.id) messageId = result.key.id;
             }
             if (messageId) {
                 sentMessagesRecord.set(messageId, { groupId, timestamp: Date.now() });
@@ -1778,6 +1773,11 @@ async function startBot() {
                 const msgId = key.id;
                 const record = sentMessagesRecord.get(msgId);
                 const groupId = key.remoteJid || (record ? record.groupId : null);
+
+                // Log untuk debug sensor
+                console.log(`[SENSOR-DEBUG] Pesan dihapus: ID=${msgId}, fromMe=${key.fromMe}, remoteJid=${key.remoteJid}`);
+                if (record) console.log(`[SENSOR-DEBUG] Record ditemukan di radar: Group=${record.groupId}`);
+                if (intentionalDeletions.has(msgId)) console.log(`[SENSOR-DEBUG] Penghapusan disengaja oleh bot (Abaikan)`);
 
                 // Jika ini pesan di grup dan BUKAN kita yang menghapus sendiri
                 if (groupId && groupId.endsWith('@g.us') && !intentionalDeletions.has(msgId)) {
