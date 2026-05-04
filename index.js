@@ -54,8 +54,19 @@ let scrapedLinks = []; // Database link yang sudah ditemukan
 const scrapedLinksFile = './scraped_links.json';
 
 // Cache untuk deteksi bot penjaga
-let sentMessagesRecord = new Map(); // ID Pesan -> ID Grup
-let intentionalDeletions = new Set(); // ID Pesan yang kita hapus sendiri
+let sentMessagesRecord = new Map(); // ID Pesan -> { groupId, timestamp }
+let intentionalDeletions = new Map(); // ID Pesan -> timestamp
+
+// Cleanup interval setiap 5 menit
+setInterval(() => {
+    const now = Date.now();
+    for (const [id, data] of sentMessagesRecord.entries()) {
+        if (now - data.timestamp > 600000) sentMessagesRecord.delete(id);
+    }
+    for (const [id, timestamp] of intentionalDeletions.entries()) {
+        if (now - timestamp > 60000) intentionalDeletions.delete(id);
+    }
+}, 300000);
 
 // Load scraped links
 if (fs.existsSync(scrapedLinksFile)) {
@@ -175,9 +186,9 @@ async function handleJadibot(senderJid, type, number = '') {
             botSock.end(new Error('Bot connected, moving to PM2'));
             
             const pm2Name = `bot_jaseb_${number || Date.now().toString().slice(-6)}`;
-            exec(`pm2 start index.js --name ${pm2Name} -- ${sessionFolder}`, (error, stdout, stderr) => {
+            exec(`pm2 start index.js --node-args="--max-old-space-size=300" --name ${pm2Name} -- ${sessionFolder}`, (error, stdout, stderr) => {
                 if (error) {
-                    activeSock.sendMessage(senderJid, { text: `❌ Gagal menjalankan bot di PM2: ${error.message}\nCoba jalankan manual: node index.js ${sessionFolder}` });
+                    activeSock.sendMessage(senderJid, { text: `❌ Gagal menjalankan bot di PM2: ${error.message}\nCoba jalankan manual: node --max-old-space-size=300 index.js ${sessionFolder}` });
                 } else {
                     activeSock.sendMessage(senderJid, { text: `🚀 *BOT JASEB AKTIF!*\n\nStatus PM2: Berhasil ✅\nKetik .menu di nomor bot baru Anda untuk mulai mengatur spam.` });
                 }
@@ -322,9 +333,7 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                 }
             }
             if (messageId) {
-                sentMessagesRecord.set(messageId, groupId);
-                // Hapus record setelah 10 menit agar tidak menumpuk
-                setTimeout(() => sentMessagesRecord.delete(messageId), 600000);
+                sentMessagesRecord.set(messageId, { groupId, timestamp: Date.now() });
             }
             return messageId; // Berhasil, kembalikan ID pesan
         } catch (err) {
@@ -529,9 +538,8 @@ async function runSpamCycle() {
                             const messageId = sentMsgId;
                             setTimeout(async () => {
                                 try {
-                                    intentionalDeletions.add(messageId);
+                                    intentionalDeletions.set(messageId, Date.now());
                                     await activeSock.sendMessage(targetGroupId, { delete: { remoteJid: targetGroupId, fromMe: true, id: messageId } });
-                                    setTimeout(() => intentionalDeletions.delete(messageId), 60000);
                                 } catch(e) {}
                             }, autoDeleteMs);
                         }
@@ -808,10 +816,11 @@ async function startBot() {
                 try {
                     await sock.sendMessage(jid, { text: "⏳ Mendownload file kontak..." });
                     const stream = await downloadContentFromMessage(isQuotedDocument, 'document');
-                    let buffer = Buffer.from([]);
+                    let chunks = [];
                     for await(const chunk of stream) {
-                        buffer = Buffer.concat([buffer, chunk]);
+                        chunks.push(chunk);
                     }
+                    let buffer = Buffer.concat(chunks);
                     rawTextData = buffer.toString('utf-8');
                 } catch(e) {
                     return await sock.sendMessage(jid, { text: `❌ Gagal mendownload dokumen: ${e.message}` });
@@ -1423,9 +1432,8 @@ async function startBot() {
                                 const messageId = sentMsgId;
                                 setTimeout(async () => {
                                     try {
-                                        intentionalDeletions.add(messageId);
+                                        intentionalDeletions.set(messageId, Date.now());
                                         await activeSock.sendMessage(targetGroupId, { delete: { remoteJid: targetGroupId, fromMe: true, id: messageId } });
-                                        setTimeout(() => intentionalDeletions.delete(messageId), 60000);
                                     } catch(e) {}
                                 }, autoDeleteMs);
                             }
@@ -1742,7 +1750,8 @@ async function startBot() {
             // Kita hanya peduli pesan yang kita kirim (fromMe)
             if (key.fromMe) {
                 const msgId = key.id;
-                const groupId = key.remoteJid || sentMessagesRecord.get(msgId);
+                const record = sentMessagesRecord.get(msgId);
+                const groupId = key.remoteJid || (record ? record.groupId : null);
 
                 // Jika ini pesan di grup dan BUKAN kita yang menghapus sendiri
                 if (groupId && groupId.endsWith('@g.us') && !intentionalDeletions.has(msgId)) {
