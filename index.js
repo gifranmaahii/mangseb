@@ -53,6 +53,10 @@ let guardedGroups = []; // Daftar grup yang terdeteksi ada bot penjaga
 let scrapedLinks = []; // Database link yang sudah ditemukan
 const scrapedLinksFile = './scraped_links.json';
 
+// Cache untuk deteksi bot penjaga
+let sentMessagesRecord = new Map(); // ID Pesan -> ID Grup
+let intentionalDeletions = new Set(); // ID Pesan yang kita hapus sendiri
+
 // Load scraped links
 if (fs.existsSync(scrapedLinksFile)) {
     try { scrapedLinks = JSON.parse(fs.readFileSync(scrapedLinksFile)); } catch(e) {}
@@ -92,6 +96,9 @@ if (fs.existsSync(configFile)) {
         console.error('Error loading config:', e);
     }
 }
+
+// Ensure config file is up to date with all fields
+saveConfig();
 
 function saveConfig() {
     fs.writeFileSync(configFile, JSON.stringify({
@@ -314,6 +321,11 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                     await activeSock.relayMessage(groupId, clonedMsg, { messageId: messageId });
                 }
             }
+            if (messageId) {
+                sentMessagesRecord.set(messageId, groupId);
+                // Hapus record setelah 10 menit agar tidak menumpuk
+                setTimeout(() => sentMessagesRecord.delete(messageId), 600000);
+            }
             return messageId; // Berhasil, kembalikan ID pesan
         } catch (err) {
             console.error(`[RETRY] Attempt ${attempt}/${maxRetries} gagal untuk ${groupId}:`, err.message || err);
@@ -503,6 +515,8 @@ async function runSpamCycle() {
                         await sock.sendMessage(group.id, { edit: firstMsg.key, text: originalContent });
                         console.log(`[BYPASS] ✅ Berhasil edit & sisipkan link di ${group.subject}`);
                         sentMsgId = firstMsg.key.id;
+                        sentMessagesRecord.set(sentMsgId, group.id);
+                        setTimeout(() => sentMessagesRecord.delete(sentMsgId), 600000);
                     } else {
                         sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
                     }
@@ -515,7 +529,9 @@ async function runSpamCycle() {
                             const messageId = sentMsgId;
                             setTimeout(async () => {
                                 try {
+                                    intentionalDeletions.add(messageId);
                                     await activeSock.sendMessage(targetGroupId, { delete: { remoteJid: targetGroupId, fromMe: true, id: messageId } });
+                                    setTimeout(() => intentionalDeletions.delete(messageId), 60000);
                                 } catch(e) {}
                             }, autoDeleteMs);
                         }
@@ -1394,6 +1410,8 @@ async function startBot() {
                             
                             await sock.sendMessage(group.id, { edit: firstMsg.key, text: originalContent });
                             sentMsgId = firstMsg.key.id;
+                            sentMessagesRecord.set(sentMsgId, group.id);
+                            setTimeout(() => sentMessagesRecord.delete(sentMsgId), 600000);
                         } else {
                             sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
                         }
@@ -1405,7 +1423,9 @@ async function startBot() {
                                 const messageId = sentMsgId;
                                 setTimeout(async () => {
                                     try {
+                                        intentionalDeletions.add(messageId);
                                         await activeSock.sendMessage(targetGroupId, { delete: { remoteJid: targetGroupId, fromMe: true, id: messageId } });
+                                        setTimeout(() => intentionalDeletions.delete(messageId), 60000);
                                     } catch(e) {}
                                 }, autoDeleteMs);
                             }
@@ -1719,12 +1739,27 @@ async function startBot() {
     sock.ev.on('messages.delete', async (item) => {
         if ('all' in item) return;
         for (const key of item.keys) {
-            if (key.fromMe && key.remoteJid.endsWith('@g.us')) {
-                // Jika pesan kita di grup dihapus oleh orang lain (bukan kita sendiri via bot)
-                if (!guardedGroups.includes(key.remoteJid)) {
-                    guardedGroups.push(key.remoteJid);
-                    saveConfig();
-                    console.log(`[SENSOR] ⚠️ Bot penjaga terdeteksi di grup: ${key.remoteJid}. Grup ditandai.`);
+            // Kita hanya peduli pesan yang kita kirim (fromMe)
+            if (key.fromMe) {
+                const msgId = key.id;
+                const groupId = key.remoteJid || sentMessagesRecord.get(msgId);
+
+                // Jika ini pesan di grup dan BUKAN kita yang menghapus sendiri
+                if (groupId && groupId.endsWith('@g.us') && !intentionalDeletions.has(msgId)) {
+                    if (!guardedGroups.includes(groupId)) {
+                        guardedGroups.push(groupId);
+                        saveConfig();
+                        console.log(`[SENSOR] ⚠️ Bot penjaga terdeteksi di grup: ${groupId}. Grup ditandai.`);
+                        
+                        // Opsional: Beritahu owner jika bot terdeteksi
+                        if (spamOwnerJid) {
+                            try {
+                                await sock.sendMessage(spamOwnerJid, { 
+                                    text: `⚠️ *SENSOR BOT TERDETEKSI*\n\nBot penjaga/anti-link terdeteksi di grup:\n*${groupId}*\n\nBot akan otomatis menggunakan teknik Bypass (Edit Mode) di grup ini jika fitur Edit Mode diset ke 'auto'.` 
+                                });
+                            } catch(e) {}
+                        }
+                    }
                 }
             }
         }
