@@ -254,94 +254,97 @@ function processSpinText(text) {
 
 // Helper: kirim pesan dengan retry & fallback
 async function sendWithRetry(groupId, message, participants = null, maxRetries = 3) {
-    if (!activeSock) return false;
+    if (!activeSock) return null;
+
+    // --- LOGIKA EDIT MODE (BYPASS SENSOR) ---
+    const isGuarded = guardedGroups.includes(groupId);
+    const shouldEdit = editMode === 'on' || (editMode === 'auto' && isGuarded);
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            // Cek koneksi sebelum kirim
             if (!activeSock.ws?.isOpen) {
-                console.log(`[RETRY] WebSocket tidak OPEN, tunggu 3 detik...`);
                 await new Promise(r => setTimeout(r, 3000));
-                if (!activeSock.ws?.isOpen) {
-                    throw new Error(`WebSocket masih tidak OPEN setelah menunggu`);
-                }
+                if (!activeSock.ws?.isOpen) throw new Error(`WebSocket disconnected`);
             }
 
             let messageId = activeSock.generateMessageTag();
-            
-            // Proses Spin Text (Hanya untuk text)
             let clonedMsg = JSON.parse(JSON.stringify(message));
-            const contentType = getContentType(clonedMsg);
-            
+            const type = getContentType(clonedMsg);
+
+            // Jika harus pakai Edit Mode (Bypass)
+            if (shouldEdit && (type === 'conversation' || clonedMsg[type]?.caption || clonedMsg.extendedTextMessage?.text)) {
+                console.log(`[BYPASS] Mengaktifkan teknik Edit Mode untuk grup ${groupId}...`);
+                const originalContent = clonedMsg.conversation || clonedMsg[type]?.caption || clonedMsg.extendedTextMessage?.text || "";
+                const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[a-zA-Z0-9]+|https:\/\/whatsapp\.com\/channel\/[a-zA-Z0-9]+)/g;
+                
+                if (linkRegex.test(originalContent)) {
+                    const safeContent = originalContent.replace(linkRegex, '[Link menyusul..]');
+                    
+                    // 1. Kirim versi aman (Tanpa Link)
+                    let firstMsg;
+                    if (type === 'conversation' || type === 'extendedTextMessage') {
+                        firstMsg = await activeSock.sendMessage(groupId, { text: safeContent });
+                    } else {
+                        // Untuk media, kirim media dengan caption aman
+                        let mediaContent = { ...clonedMsg[type] };
+                        mediaContent.caption = safeContent;
+                        firstMsg = await activeSock.sendMessage(groupId, { [type]: mediaContent });
+                    }
+
+                    await new Promise(r => setTimeout(r, 5000)); // Tunggu bot penjaga lewat
+
+                    // 2. Edit pesan untuk memasukkan link asli
+                    await activeSock.sendMessage(groupId, { edit: firstMsg.key, text: originalContent });
+                    console.log(`[BYPASS] ✅ Berhasil edit & bypass di ${groupId}`);
+                    
+                    const finalId = firstMsg.key.id;
+                    sentMessagesRecord.set(finalId, { groupId, timestamp: Date.now() });
+                    return finalId;
+                }
+            }
+
+            // --- PENGIRIMAN NORMAL (TIDAK EDIT) ---
             if (clonedMsg.conversation) {
                 clonedMsg.conversation = processSpinText(clonedMsg.conversation);
             } else if (clonedMsg.extendedTextMessage?.text) {
                 clonedMsg.extendedTextMessage.text = processSpinText(clonedMsg.extendedTextMessage.text);
-            } else if (clonedMsg[contentType]?.text) {
-                clonedMsg[contentType].text = processSpinText(clonedMsg[contentType].text);
-            } else if (clonedMsg[contentType]?.caption) {
-                clonedMsg[contentType].caption = processSpinText(clonedMsg[contentType].caption);
+            } else if (clonedMsg[type]?.caption) {
+                clonedMsg[type].caption = processSpinText(clonedMsg[type].caption);
             }
 
-            // Proses Hidetag
             if (useHidetag && participants && participants.length > 0) {
                 const jids = participants.map(p => p.id);
                 if (clonedMsg.conversation) {
-                    clonedMsg.extendedTextMessage = {
-                        text: clonedMsg.conversation,
-                        contextInfo: { mentionedJid: jids }
-                    };
+                    clonedMsg.extendedTextMessage = { text: clonedMsg.conversation, contextInfo: { mentionedJid: jids } };
                     delete clonedMsg.conversation;
                 } else if (clonedMsg.extendedTextMessage) {
-                    clonedMsg.extendedTextMessage.contextInfo = clonedMsg.extendedTextMessage.contextInfo || {};
-                    clonedMsg.extendedTextMessage.contextInfo.mentionedJid = jids;
-                } else if (clonedMsg.imageMessage) {
-                    clonedMsg.imageMessage.contextInfo = clonedMsg.imageMessage.contextInfo || {};
-                    clonedMsg.imageMessage.contextInfo.mentionedJid = jids;
-                } else if (clonedMsg.videoMessage) {
-                    clonedMsg.videoMessage.contextInfo = clonedMsg.videoMessage.contextInfo || {};
-                    clonedMsg.videoMessage.contextInfo.mentionedJid = jids;
+                    clonedMsg.extendedTextMessage.contextInfo = { ...clonedMsg.extendedTextMessage.contextInfo, mentionedJid: jids };
+                } else if (clonedMsg[type]) {
+                    clonedMsg[type].contextInfo = { ...clonedMsg[type].contextInfo, mentionedJid: jids };
                 }
             }
 
-            // Attempt 1-2: pakai relayMessage (menjaga metadata saluran)
+            let result;
             if (attempt <= 2) {
-                await activeSock.relayMessage(groupId, clonedMsg, { messageId: messageId });
+                await activeSock.relayMessage(groupId, clonedMsg, { messageId });
             } else {
-                // Attempt 3: fallback pakai sendMessage (lebih reliable)
-                let result;
-                if (clonedMsg.conversation) {
-                    result = await activeSock.sendMessage(groupId, { text: clonedMsg.conversation });
-                } else if (clonedMsg.extendedTextMessage) {
-                    result = await activeSock.sendMessage(groupId, { text: clonedMsg.extendedTextMessage.text });
-                } else if (clonedMsg.contactMessage) {
-                    result = await activeSock.sendMessage(groupId, { contacts: { displayName: clonedMsg.contactMessage.displayName, contacts: [{ vcard: clonedMsg.contactMessage.vcard }] } });
-                } else if (clonedMsg.imageMessage) {
-                    const img = clonedMsg.imageMessage;
-                    result = await activeSock.sendMessage(groupId, { image: { url: img.url }, caption: img.caption || '', mimetype: img.mimetype });
-                } else if (clonedMsg.videoMessage) {
-                    const vid = clonedMsg.videoMessage;
-                    result = await activeSock.sendMessage(groupId, { video: { url: vid.url }, caption: vid.caption || '', mimetype: vid.mimetype });
-                } else {
-                    await activeSock.relayMessage(groupId, clonedMsg, { messageId: messageId });
-                }
-                
-                // Update messageId jika pakai sendMessage agar sinkron dengan Sensor
+                if (clonedMsg.conversation) result = await activeSock.sendMessage(groupId, { text: clonedMsg.conversation });
+                else if (clonedMsg.extendedTextMessage) result = await activeSock.sendMessage(groupId, { text: clonedMsg.extendedTextMessage.text });
+                else if (clonedMsg[type]) result = await activeSock.sendMessage(groupId, { [type]: clonedMsg[type] });
                 if (result?.key?.id) messageId = result.key.id;
             }
+
             if (messageId) {
                 sentMessagesRecord.set(messageId, { groupId, timestamp: Date.now() });
             }
-            return messageId; // Berhasil, kembalikan ID pesan
+            return messageId;
+
         } catch (err) {
-            console.error(`[RETRY] Attempt ${attempt}/${maxRetries} gagal untuk ${groupId}:`, err.message || err);
-            if (attempt < maxRetries) {
-                const waitTime = attempt * 2000; // 2s, 4s
-                console.log(`[RETRY] Menunggu ${waitTime/1000} detik sebelum retry...`);
-                await new Promise(r => setTimeout(r, waitTime));
-            }
+            console.error(`[RETRY] Attempt ${attempt}/${maxRetries} gagal:`, err.message);
+            if (attempt < maxRetries) await new Promise(r => setTimeout(r, 2000));
         }
     }
-    return null; // Semua retry gagal
+    return null;
 }
 
 async function runSpamCycle() {
@@ -497,37 +500,7 @@ async function runSpamCycle() {
                     let msgObj = messagesToSend[j];
                     if (j > 0) await new Promise(r => setTimeout(r, doubleMessageDelay));
 
-                    // LOGIKA EDIT MODE
-                    const isGuarded = guardedGroups.includes(group.id);
-                    const shouldEdit = editMode === 'on' || (editMode === 'auto' && isGuarded);
-
-                    let sentMsgId;
-                    if (shouldEdit) {
-                        const type = getContentType(msgObj.message);
-                        const originalContent = msgObj.message.conversation || msgObj.message[type]?.caption || msgObj.message.extendedTextMessage?.text || "";
-                        
-                        // Buat versi "Tanpa Link" untuk pesan pertama
-                        const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[a-zA-Z0-9]+|https:\/\/whatsapp\.com\/channel\/[a-zA-Z0-9]+)/g;
-                        const safeContent = originalContent.replace(linkRegex, '[Link menyusul..]');
-                        
-                        // Kirim pesan utuh tanpa link dulu
-                        const firstMsg = await sock.sendMessage(group.id, { text: safeContent });
-                        console.log(`[BYPASS] Mengirim pesan awal tanpa link ke ${group.subject}...`);
-                        
-                        await new Promise(r => setTimeout(r, 5000)); // Tunggu 5 detik agar bot penjaga lewat
-                        
-                        // Edit masukkan link aslinya
-                        await sock.sendMessage(group.id, { edit: firstMsg.key, text: originalContent });
-                        console.log(`[BYPASS] ✅ Berhasil edit & sisipkan link di ${group.subject}`);
-                        sentMsgId = firstMsg.key.id;
-                        sentMessagesRecord.set(sentMsgId, { groupId: group.id, timestamp: Date.now() });
-                        setTimeout(() => sentMessagesRecord.delete(sentMsgId), 600000);
-                    } else {
-                        sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
-                        if (sentMsgId) {
-                            sentMessagesRecord.set(sentMsgId, { groupId: group.id, timestamp: Date.now() });
-                        }
-                    }
+                    sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
 
                     if (sentMsgId) {
                         isAnySuccess = true;
@@ -1425,31 +1398,7 @@ async function startBot() {
                         const msgObj = messagesToSend[j];
                         if (j > 0) await new Promise(r => setTimeout(r, doubleMessageDelay));
 
-                        // LOGIKA EDIT MODE
-                        const isGuarded = guardedGroups.includes(group.id);
-                        const shouldEdit = editMode === 'on' || (editMode === 'auto' && isGuarded);
-
-                        let sentMsgId;
-                        if (shouldEdit) {
-                            const type = getContentType(msgObj.message);
-                            const originalContent = msgObj.message.conversation || msgObj.message[type]?.caption || msgObj.message.extendedTextMessage?.text || "";
-                            
-                            const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[a-zA-Z0-9]+|https:\/\/whatsapp\.com\/channel\/[a-zA-Z0-9]+)/g;
-                            const safeContent = originalContent.replace(linkRegex, '[Link menyusul..]');
-                            
-                            const firstMsg = await sock.sendMessage(group.id, { text: safeContent });
-                            await new Promise(r => setTimeout(r, 5000));
-                            
-                            await sock.sendMessage(group.id, { edit: firstMsg.key, text: originalContent });
-                            sentMsgId = firstMsg.key.id;
-                            sentMessagesRecord.set(sentMsgId, { groupId: group.id, timestamp: Date.now() });
-                            setTimeout(() => sentMessagesRecord.delete(sentMsgId), 600000);
-                        } else {
-                            sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
-                            if (sentMsgId) {
-                                sentMessagesRecord.set(sentMsgId, { groupId: group.id, timestamp: Date.now() });
-                            }
-                        }
+                        sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
 
                         if (sentMsgId) {
                             isAnySuccess = true;
@@ -1830,8 +1779,7 @@ async function startBot() {
                 const sentId = await sendWithRetry(targetJid, msgObjToUse.message, targetGroup.participants);
                 
                 if (sentId) {
-                    sentMessagesRecord.set(sentId, { groupId: targetJid, timestamp: Date.now() });
-                    await sock.sendMessage(jid, { text: `✅ *BERHASIL!*\nTes kirim ke grup *${targetName}* sukses.` });
+                    await sock.sendMessage(jid, { text: `✅ *BERHASIL!*\nTes kirim ke grup *${targetName}* sukses.\n\n_Catatan: Jika grup ini berpenjaga, bot tadi otomatis menggunakan teknik Bypass (Edit Mode)._` });
                 } else {
                     throw new Error("Gagal mendapatkan ID pesan setelah pengiriman.");
                 }
