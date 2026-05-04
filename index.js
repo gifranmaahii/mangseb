@@ -1621,6 +1621,69 @@ async function startBot() {
             await sock.sendMessage(jid, { text: '✅ *Daftar grup terpantau bot telah direset.*' });
         }
 
+        if (command === '.addguarded') {
+            const groupMetadataList = await sock.groupFetchAllParticipating();
+            const groupsList = Object.values(groupMetadataList);
+            let input = args[1];
+            let targetGroup = null;
+
+            if (!input) return await sock.sendMessage(jid, { text: '❌ Masukkan nomor urut atau ID grup!\nContoh: .addguarded 1' });
+
+            if (!isNaN(input)) {
+                const idx = parseInt(input) - 1;
+                if (idx >= 0 && idx < groupsList.length) targetGroup = groupsList[idx];
+            } else {
+                targetGroup = groupsList.find(g => g.id === input || g.id.includes(input));
+            }
+
+            if (targetGroup) {
+                if (!guardedGroups.includes(targetGroup.id)) {
+                    guardedGroups.push(targetGroup.id);
+                    saveConfig();
+                    await sock.sendMessage(jid, { text: `✅ Grup *${targetGroup.subject}* berhasil ditandai sebagai berpenjaga bot.` });
+                } else {
+                    await sock.sendMessage(jid, { text: `⚠️ Grup *${targetGroup.subject}* sudah ada di daftar.` });
+                }
+            } else {
+                await sock.sendMessage(jid, { text: '❌ Grup tidak ditemukan.' });
+            }
+        }
+
+        if (command === '.delguarded') {
+            const input = args[1];
+            if (!input) return await sock.sendMessage(jid, { text: '❌ Masukkan nomor urut atau ID grup!' });
+
+            let targetId = input;
+            if (!isNaN(input)) {
+                const idx = parseInt(input) - 1;
+                if (idx >= 0 && idx < guardedGroups.length) {
+                    targetId = guardedGroups[idx];
+                }
+            }
+
+            const index = guardedGroups.indexOf(targetId);
+            if (index > -1) {
+                guardedGroups.splice(index, 1);
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ Berhasil menghapus grup dari daftar berpenjaga.` });
+            } else {
+                await sock.sendMessage(jid, { text: `⚠️ Grup tidak ditemukan di daftar berpenjaga.` });
+            }
+        }
+
+        if (command === '.listguarded') {
+            if (guardedGroups.length === 0) return await sock.sendMessage(jid, { text: '📋 Daftar grup berpenjaga kosong.' });
+            const groupMetadataList = await sock.groupFetchAllParticipating();
+            const allGroups = Object.values(groupMetadataList);
+            
+            let txt = `📋 *DAFTAR GRUP BERPENJAGA BOT (${guardedGroups.length})*\n\n`;
+            guardedGroups.forEach((id, i) => {
+                const group = allGroups.find(g => g.id === id);
+                txt += `${i + 1}. ${group ? group.subject : id}\n`;
+            });
+            await sock.sendMessage(jid, { text: txt });
+        }
+
         if (command === '.setscrapertarget') {
             scraperTargetJid = jid;
             saveConfig();
