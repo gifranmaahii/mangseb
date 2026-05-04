@@ -761,6 +761,25 @@ async function startBot() {
                 console.log(`[CMD] Executing: ${text.split(' ')[0]} from ${senderNumber}`);
             }
 
+            // --- DETEKSI PENGHAPUSAN PESAN (REVOKE/DELETE) ---
+            if (msg.message?.protocolMessage?.type === 0 || msg.message?.protocolMessage?.type === 'REVOKE') {
+                const targetId = msg.message.protocolMessage.key.id;
+                const record = sentMessagesRecord.get(targetId);
+                console.log(`[SENSOR-UPSERT] Terdeteksi ProtocolMessage (Delete) ID: ${targetId}`);
+                
+                if (record) {
+                    const groupId = record.groupId;
+                    console.log(`[SENSOR-UPSERT] Match! Pesan kita di grup ${groupId} dihapus.`);
+                    if (!guardedGroups.includes(groupId)) {
+                        guardedGroups.push(groupId);
+                        saveConfig();
+                        if (spamOwnerJid) {
+                            sock.sendMessage(spamOwnerJid, { text: `⚠️ *SENSOR BOT (UPSERT)*\n\nBot penjaga terdeteksi di grup:\n*${groupId}*\n\nBot akan otomatis menggunakan Edit Mode.` }).catch(() => {});
+                        }
+                    }
+                }
+            }
+
             // --- FITUR LINK SCRAPER (MONITORING GRUP) ---
             if (linkScraper && jid.endsWith('@g.us') && !fromMe) {
                 const linkRegex = /https:\/\/chat\.whatsapp\.com\/[a-zA-Z0-9]+/g;
@@ -1766,35 +1785,30 @@ async function startBot() {
 
     // LISTENER SENSOR BOT PENJAGA (Mendengar penghapusan pesan)
     sock.ev.on('messages.delete', async (item) => {
+        console.log(`[SENSOR-DEBUG] Event messages.delete diterima. Jumlah kunci: ${item.keys?.length}`);
         if ('all' in item) return;
         for (const key of item.keys) {
-            // Kita hanya peduli pesan yang kita kirim (fromMe)
-            if (key.fromMe) {
-                const msgId = key.id;
-                const record = sentMessagesRecord.get(msgId);
-                const groupId = key.remoteJid || (record ? record.groupId : null);
-
-                // Log untuk debug sensor
-                console.log(`[SENSOR-DEBUG] Pesan dihapus: ID=${msgId}, fromMe=${key.fromMe}, remoteJid=${key.remoteJid}`);
-                if (record) console.log(`[SENSOR-DEBUG] Record ditemukan di radar: Group=${record.groupId}`);
-                if (intentionalDeletions.has(msgId)) console.log(`[SENSOR-DEBUG] Penghapusan disengaja oleh bot (Abaikan)`);
-
-                // Jika ini pesan di grup dan BUKAN kita yang menghapus sendiri
-                if (groupId && groupId.endsWith('@g.us') && !intentionalDeletions.has(msgId)) {
+            const msgId = key.id;
+            const record = sentMessagesRecord.get(msgId);
+            
+            // Log setiap penghapusan yang mampir ke bot
+            console.log(`[SENSOR-DEBUG] KeyID: ${msgId} | fromMe: ${key.fromMe} | Remote: ${key.remoteJid}`);
+            
+            if (record) {
+                const groupId = record.groupId;
+                console.log(`[SENSOR-MATCH] Cocok! Pesan kita di grup ${groupId} dihapus.`);
+                
+                if (!intentionalDeletions.has(msgId)) {
                     if (!guardedGroups.includes(groupId)) {
                         guardedGroups.push(groupId);
                         saveConfig();
-                        console.log(`[SENSOR] ⚠️ Bot penjaga terdeteksi di grup: ${groupId}. Grup ditandai.`);
-                        
-                        // Opsional: Beritahu owner jika bot terdeteksi
+                        console.log(`[SENSOR] ⚠️ Bot penjaga terdeteksi di ${groupId}.`);
                         if (spamOwnerJid) {
-                            try {
-                                await sock.sendMessage(spamOwnerJid, { 
-                                    text: `⚠️ *SENSOR BOT TERDETEKSI*\n\nBot penjaga/anti-link terdeteksi di grup:\n*${groupId}*\n\nBot akan otomatis menggunakan teknik Bypass (Edit Mode) di grup ini jika fitur Edit Mode diset ke 'auto'.` 
-                                });
-                            } catch(e) {}
+                            sock.sendMessage(spamOwnerJid, { text: `⚠️ *SENSOR BOT (DELETE)*\n\nBot penjaga terdeteksi di grup:\n*${groupId}*` }).catch(() => {});
                         }
                     }
+                } else {
+                    console.log(`[SENSOR-SKIP] Penghapusan diabaikan karena dilakukan oleh bot sendiri (Auto-Delete).`);
                 }
             }
         }
