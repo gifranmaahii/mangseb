@@ -754,12 +754,6 @@ async function startBot() {
             const senderNumber = senderJid ? senderJid.split('@')[0] : "";
             const isOwner = fromMe || ownerNumbers.includes(senderNumber) || ownerNumbers.includes(senderJid);
 
-            // LOGGING UNTUK DEBUG (Melihat semua pesan masuk di terminal)
-            if (text) {
-                const logTag = isOwner ? '[OWNER]' : '[USER]';
-                console.log(`${logTag} From: ${senderNumber} | Jid: ${jid} | Text: ${text.substring(0, 50)}`);
-            }
-
             if (!isOwner) return; // HANYA PROSES COMMAND JIKA DARI DIRI SENDIRI ATAU OWNER
 
             const isCommand = text.startsWith('.');
