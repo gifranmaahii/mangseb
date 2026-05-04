@@ -1702,45 +1702,58 @@ async function startBot() {
 
         if (command === '.teskirim') {
             if ((!savedMessage || !savedMessage.message) && savedMessages.length === 0) {
-                await sock.sendMessage(jid, { text: '❌ Anda belum mengatur pesan promosi!' });
-                return;
+                return await sock.sendMessage(jid, { text: '❌ Anda belum mengatur pesan promosi! Setel dulu dengan .setpesan' });
             }
 
             const groupMetadata = await sock.groupFetchAllParticipating();
             const allGroups = Object.values(groupMetadata);
             
-            let targetGroupJid = args[1]; // Mengambil ID grup jika diberikan
-            let targetGroupName = "";
+            let input = args[1]; 
+            let targetGroup = null;
 
-            if (targetGroupJid) {
-                const group = allGroups.find(g => g.id === targetGroupJid);
-                if (!group) {
-                    await sock.sendMessage(jid, { text: `❌ ID grup tidak ditemukan di daftar grup yang Anda ikuti.` });
-                    return;
+            if (input) {
+                input = input.trim();
+                // 1. Cek apakah input adalah nomor urut (angka)
+                if (!isNaN(input)) {
+                    const idx = parseInt(input) - 1;
+                    if (idx >= 0 && idx < allGroups.length) {
+                        targetGroup = allGroups[idx];
+                    }
+                } 
+                // 2. Cek apakah input adalah JID langsung
+                else {
+                    targetGroup = allGroups.find(g => g.id === input || g.id.includes(input));
                 }
-                targetGroupName = group.subject;
+
+                if (!targetGroup) {
+                    return await sock.sendMessage(jid, { text: `❌ Grup tidak ditemukan.\nPastikan nomor urut atau ID grup benar.\n\n_Tip: Gunakan .listgrup untuk melihat daftar._` });
+                }
             } else {
-                // Jika tidak ada argumen, cari grup pertama yang tidak di-blacklist
-                const availableGroups = allGroups.filter(g => !blacklistedGroups.includes(g.id));
-                if (availableGroups.length === 0) {
-                    await sock.sendMessage(jid, { text: '❌ Tidak ada grup yang tersedia (semua grup di-blacklist atau belum gabung grup).' });
-                    return;
+                // 3. Jika tidak ada input, cari grup pertama yang tidak di-blacklist
+                targetGroup = allGroups.find(g => !blacklistedGroups.includes(g.id));
+                if (!targetGroup) {
+                    return await sock.sendMessage(jid, { text: '❌ Tidak ada grup yang tersedia (semua di-blacklist).' });
                 }
-                targetGroupJid = availableGroups[0].id;
-                targetGroupName = availableGroups[0].subject;
             }
 
-            await sock.sendMessage(jid, { text: `🔄 Mengetes kirim ke grup: *${targetGroupName}*...` });
+            const targetJid = targetGroup.id;
+            const targetName = targetGroup.subject;
+
+            await sock.sendMessage(jid, { text: `🔄 *UJI COBA PENGIRIMAN*\n\n🎯 *Target:* ${targetName}\n🆔 *ID:* ${targetJid}\n\n_Sedang mengirim pesan..._` });
+            
             try {
-                console.log(`[TES] Mencoba kirim ke: ${targetGroupName} (${targetGroupJid})`);
                 const msgObjToUse = getNextMessageToUse();
-                // Menggunakan relayMessage untuk bypass validasi media dan menjaga metadata asli (View Channel)
-                await sock.relayMessage(targetGroupJid, msgObjToUse.message, { messageId: sock.generateMessageTag() });
-                console.log(`[TES] Berhasil dikirim ke: ${targetGroupName}`);
-                await sock.sendMessage(jid, { text: `✅ Berhasil dikirim ke grup: *${targetGroupName}*` });
+                // Gunakan sendWithRetry agar sama dengan logika saat spam berjalan
+                const sentId = await sendWithRetry(targetJid, msgObjToUse.message, targetGroup.participants);
+                
+                if (sentId) {
+                    await sock.sendMessage(jid, { text: `✅ *BERHASIL!*\nTes kirim ke grup *${targetName}* sukses.` });
+                } else {
+                    throw new Error("Gagal mendapatkan ID pesan setelah pengiriman.");
+                }
             } catch (err) {
-                console.error(`[TES] Gagal kirim ke ${targetGroupName}:`, err);
-                await sock.sendMessage(jid, { text: `❌ Gagal mengirim tes ke *${targetGroupName}*: ${err.message}` });
+                console.error(`[TES] Gagal kirim ke ${targetName}:`, err);
+                await sock.sendMessage(jid, { text: `❌ *GAGAL!*\nKesalahan: ${err.message}` });
             }
         }
     } catch (err) {
