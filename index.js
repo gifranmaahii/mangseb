@@ -751,14 +751,22 @@ async function startBot() {
                        "";
 
             const senderJid = msg.key.participant || msg.key.remoteJid || "";
-            const senderNumber = senderJid.split('@')[0];
-            const isOwner = ownerNumbers.includes(senderNumber);
+            const senderNumber = senderJid ? senderJid.split('@')[0] : "";
+            const isOwner = fromMe || ownerNumbers.includes(senderNumber) || ownerNumbers.includes(senderJid);
 
-            if (!fromMe && !isOwner) return; // HANYA PROSES COMMAND JIKA DARI DIRI SENDIRI ATAU OWNER
+            // LOGGING UNTUK DEBUG (Melihat semua pesan masuk di terminal)
+            if (text) {
+                const logTag = isOwner ? '[OWNER]' : '[USER]';
+                console.log(`${logTag} From: ${senderNumber} | Jid: ${jid} | Text: ${text.substring(0, 50)}`);
+            }
 
-            // --- LOGGING FILTER ---
-            if (isCommand || !jid.endsWith('@g.us')) {
-                console.log(`[MSG] From: ${senderNumber} | Text: ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`);
+            if (!isOwner) return; // HANYA PROSES COMMAND JIKA DARI DIRI SENDIRI ATAU OWNER
+
+            const isCommand = text.startsWith('.');
+
+            // --- LOGGING FILTER UNTUK COMMAND ---
+            if (isCommand) {
+                console.log(`[CMD] Executing: ${text.split(' ')[0]} from ${senderNumber}`);
             }
 
             // --- FITUR LINK SCRAPER (MONITORING GRUP) ---
@@ -799,7 +807,7 @@ async function startBot() {
                 }
             }
 
-            const isCommand = text.startsWith('.');
+
             // Hanya simpan pesan terakhir jika: BUKAN command, DI CHAT PRIBADI, dan BUKAN dari bot sendiri
             if (!isCommand && !jid.endsWith('@g.us') && !fromMe) {
                 lastNonCommandMessage = msg;
