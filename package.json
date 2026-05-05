@@ -4,6 +4,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node --max-old-space-size=300 --expose-gc index.js",
+    "postinstall": "patch-package",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -15,5 +16,8 @@
     "node-cron": "^4.2.1",
     "pino": "^10.3.1",
     "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "patch-package": "^8.0.1"
   }
 }
