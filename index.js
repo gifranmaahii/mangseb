@@ -1077,11 +1077,11 @@ async function startBot() {
         // ==========================================
         if (command === '.cekgrup') {
             const query = args.slice(1).join(' ').toLowerCase();
-            if (!query) {
-                return await sock.sendMessage(jid, { text: '❌ Gunakan format: `.cekgrup nama_grup`' });
+            if (query.length < 3) {
+                return await sock.sendMessage(jid, { text: '⚠️ Masukkan minimal 3 karakter untuk mencari grup agar bot tidak berat.' });
             }
 
-            await sock.sendMessage(jid, { text: `🔍 Mencari grup dengan nama: "${query}"...` });
+            await sock.sendMessage(jid, { text: `🔍 Mencari: "${query}"...` });
             const allGroups = await getGroups();
             const filtered = allGroups.filter(g => g.subject.toLowerCase().includes(query));
 
@@ -1089,21 +1089,20 @@ async function startBot() {
                 return await sock.sendMessage(jid, { text: `❌ Tidak ditemukan grup dengan nama "${query}".` });
             }
 
-            let response = `🔍 *HASIL PENCARIAN GRUP*\n`;
-            response += `Ditemukan: ${filtered.length} grup\n\n`;
+            let response = `🔍 *HASIL PENCARIAN*\n`;
+            response += `Ditemukan: ${filtered.length} grup\n`;
+            response += `_Menampilkan 10 hasil teratas:_\n\n`;
 
-            filtered.slice(0, 15).forEach((g, i) => {
+            filtered.slice(0, 10).forEach((g, i) => {
                 const isBlacklisted = blacklistedGroups.includes(g.id);
                 const isGuarded = guardedGroups.includes(g.id);
                 let status = isBlacklisted ? '🚫' : (isGuarded ? '🛡️' : '✅');
                 
-                response += `${i + 1}. *${g.subject}*\n`;
-                response += `🆔 ID: \`${g.id}\` [${status}]\n`;
-                response += `👥 Peserta: ${g.participants?.length || '?'}\n\n`;
+                response += `${i + 1}. *${g.subject.substring(0, 30)}*\nID: \`${g.id}\` [${status}]\n\n`;
             });
 
-            if (filtered.length > 15) {
-                response += `\n_(Hanya menampilkan 15 hasil pertama)_`;
+            if (filtered.length > 10) {
+                response += `\n💡 Ada ${filtered.length - 10} grup lain, gunakan nama yang lebih spesifik.`;
             }
 
             await sock.sendMessage(jid, { text: response });
