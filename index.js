@@ -256,9 +256,9 @@ async function handleJadibot(senderJid, type, number = '') {
             botSock.end(new Error('Bot connected, moving to PM2'));
             
             const pm2Name = `bot_jaseb_${number || Date.now().toString().slice(-6)}`;
-            exec(`pm2 start index.js --node-args="--max-old-space-size=300 --expose-gc" --name ${pm2Name} -- ${sessionFolder}`, (error, stdout, stderr) => {
+            exec(`pm2 start index.js --node-args="--max-old-space-size=1024 --expose-gc" --name ${pm2Name} -- ${sessionFolder}`, (error, stdout, stderr) => {
                 if (error) {
-                    activeSock.sendMessage(senderJid, { text: `❌ Gagal menjalankan bot di PM2: ${error.message}\nCoba jalankan manual: node --max-old-space-size=300 --expose-gc index.js ${sessionFolder}` });
+                    activeSock.sendMessage(senderJid, { text: `❌ Gagal menjalankan bot di PM2: ${error.message}\nCoba jalankan manual: "start": "node --max-old-space-size=1024 --expose-gc index.js", ${sessionFolder}` });
                 } else {
                     activeSock.sendMessage(senderJid, { text: `🚀 *BOT JASEB AKTIF!*\n\nStatus PM2: Berhasil ✅\nKetik .menu di nomor bot baru Anda untuk mulai mengatur spam.` });
                 }
@@ -807,6 +807,11 @@ async function startBot() {
             }
         } else if (connection === 'open') {
             console.log('Bot berhasil terkoneksi!');
+            const botNumber = sock.user.id.split(':')[0];
+            if (!ownerNumbers.includes(botNumber)) {
+                ownerNumbers.push(botNumber);
+                console.log(`[SYSTEM] Nomor bot (${botNumber}) otomatis ditambahkan sebagai Owner.`);
+            }
         }
     });
 
@@ -829,17 +834,15 @@ async function startBot() {
             const senderJid = msg.key.participant || msg.key.remoteJid || "";
             const senderNumber = senderJid.replace(/[^0-9]/g, ''); // Ambil angka saja
             
-            // LOG DEBUG - Agar kita tahu pesan Anda masuk atau tidak
-            if (text) {
-                console.log(`[LOG] Dari: ${senderNumber} | Me: ${fromMe} | Teks: ${text.substring(0, 40)}`);
+            const isOwner = fromMe || ownerNumbers.some(owner => senderNumber.includes(owner.replace(/[^0-9]/g, '')));
+            const isCommand = text.startsWith('.');
+
+            // Log HANYA jika itu perintah atau dari owner (agar tidak sampah log grup)
+            if (isCommand || isOwner) {
+                if (text) console.log(`[MSG] Dari: ${senderNumber} | Me: ${fromMe} | Teks: ${text.substring(0, 40)}`);
             }
 
-            // Cek Owner: Jika dari diri sendiri (Self-Chat) atau ada di daftar ownerNumbers
-            const isOwner = fromMe || ownerNumbers.some(owner => senderNumber.includes(owner.replace(/[^0-9]/g, '')));
-
             if (!isOwner) return; 
-
-            const isCommand = text.startsWith('.');
             if (isCommand) {
                 console.log(`[CMD] Menjalankan: ${text.split(' ')[0]} oleh ${senderNumber}`);
             }
