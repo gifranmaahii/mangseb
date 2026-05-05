@@ -1,13 +1,5 @@
-const {
-    default: makeWASocket,
-    useMultiFileAuthState,
-    DisconnectReason,
-    fetchLatestBaileysVersion,
-    makeCacheableSignalKeyStore,
-    jidNormalizedUser,
-    getContentType,
-    generateWAMessageFromContent,
     downloadContentFromMessage,
+    makeInMemoryStore,
     proto
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
@@ -57,20 +49,30 @@ const scrapedLinksFile = './scraped_links.json';
 let sentMessagesRecord = new Map(); // ID Pesan -> { groupId, timestamp }
 let intentionalDeletions = new Map(); // ID Pesan -> timestamp
 
-// Cache untuk daftar grup (mengurangi heap spike)
 let groupCache = null;
 let lastGroupCacheTime = 0;
-const GROUP_CACHE_TTL = 300000; // 5 menit
+const GROUP_CACHE_TTL = 600000; // 10 menit
 let isFetchingGroups = false;
+
+const store = makeInMemoryStore({ logger: pino({ level: 'silent' }) });
+// Load store dari file jika ada (opsional, untuk persistensi kontak/grup)
+// store.readFromFile('./baileys_store.json');
+// setInterval(() => { store.writeToFile('./baileys_store.json') }, 10000);
 
 async function getGroups() {
     const now = Date.now();
+    
+    // Gunakan data dari store jika sudah tersedia dan cukup banyak
+    const groupsInStore = Object.values(store.groupMetadata || {});
+    if (groupsInStore.length > 0) {
+        return groupsInStore;
+    }
+
     if (groupCache && (now - lastGroupCacheTime < GROUP_CACHE_TTL)) {
         return groupCache;
     }
     if (!activeSock) return [];
     
-    // Cegah fetch ganda secara bersamaan (Race Condition)
     if (isFetchingGroups) {
         while (isFetchingGroups) {
             await new Promise(r => setTimeout(r, 1000));
@@ -80,7 +82,7 @@ async function getGroups() {
 
     isFetchingGroups = true;
     try {
-        console.log('[CACHE] Refreshing group list metadata...');
+        console.log('[CACHE] Refreshing group list metadata via store/API...');
         const groupMetadata = await activeSock.groupFetchAllParticipating();
         groupCache = Object.values(groupMetadata);
         lastGroupCacheTime = now;
@@ -90,6 +92,29 @@ async function getGroups() {
         isFetchingGroups = false;
     }
     return groupCache || [];
+}
+
+// Fungsi membersihkan file sesi lama (> 2 hari)
+function cleanupSessions() {
+    if (!fs.existsSync(sessionName)) return;
+    const files = fs.readdirSync(sessionName);
+    const now = Date.now();
+    let deletedCount = 0;
+    
+    files.forEach(file => {
+        if (file.startsWith('session-') && file.endsWith('.json')) {
+            const filePath = `${sessionName}/${file}`;
+            const stats = fs.statSync(filePath);
+            const ageMs = now - stats.mtimeMs;
+            if (ageMs > 2 * 24 * 60 * 60 * 1000) { // 2 hari
+                try {
+                    fs.unlinkSync(filePath);
+                    deletedCount++;
+                } catch(e) {}
+            }
+        }
+    });
+    if (deletedCount > 0) console.log(`[CLEANUP] Berhasil menghapus ${deletedCount} file sesi usang.`);
 }
 
 // Cleanup interval lebih sering (setiap 2 menit)
@@ -108,6 +133,11 @@ setInterval(() => {
     if (global.gc) {
         global.gc();
         console.log('[MEM] Garbage Collection executed.');
+    }
+    
+    // Jalankan pembersihan sesi setiap 1 jam
+    if (new Date().getMinutes() < 2) {
+        cleanupSessions();
     }
 }, 120000);
 
@@ -316,30 +346,26 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
 
             // Jika harus pakai Edit Mode (Bypass)
             if (shouldEdit && (type === 'conversation' || clonedMsg[type]?.caption || clonedMsg.extendedTextMessage?.text)) {
-                console.log(`[BYPASS] Mengaktifkan teknik Edit Mode untuk grup ${groupId}...`);
                 const originalContent = clonedMsg.conversation || clonedMsg[type]?.caption || clonedMsg.extendedTextMessage?.text || "";
                 const contextInfo = clonedMsg[type]?.contextInfo || clonedMsg.extendedTextMessage?.contextInfo || null;
                 const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[^\s\n]+|https:\/\/whatsapp\.com\/channel\/[^\s\n]+)/g;
                 
                 if (linkRegex.test(originalContent)) {
-                    // --- SMART SPLIT BYPASS UNTUK SALURAN ---
-                    // Karena WA melarang edit pesan Saluran, kita pecah jadi 2 pesan
-                    if (contextInfo && contextInfo.forwardedNewsletterMessageInfo) {
-                        console.log(`[BYPASS] Smart Split: Mengirim Pesan Saluran (Mewah) tanpa link...`);
+                    // --- 1. SMART SPLIT BYPASS UNTUK SHARE SALURAN (MEWAH) ---
+                    // Kita gunakan 2 pesan hanya jika ini benar-benar Forwarded Newsletter (Saluran)
+                    if (contextInfo?.forwardedNewsletterMessageInfo) {
+                        console.log(`[BYPASS] Smart Split: Mengirim Pesan Saluran (Mewah) untuk grup ${groupId}...`);
                         const safeContent = originalContent.replace(linkRegex, '[Link di bawah 👇]');
                         
-                        // 1. Kirim Pesan Saluran (Tanpa Link) - Ini Aman & Mewah
+                        // Kirim Pesan Saluran Utama (Tanpa Link)
                         const mainMsg = await activeSock.sendMessage(groupId, { 
                             text: safeContent, 
                             contextInfo: contextInfo 
                         });
 
-                        // 2. Kirim Pesan Kedua berisi Link (Gunakan Edit Mode Bypass)
-                        console.log(`[BYPASS] Smart Split: Mengirim Link Bypass di bawahnya...`);
+                        // Kirim Pesan Kedua khusus Link (Gunakan Edit Mode agar lebih aman)
                         const linkOnly = originalContent.match(linkRegex).join('\n');
-                        const placeholder = "Sedang mengambil link terbaru...";
-                        
-                        const linkMsg = await activeSock.sendMessage(groupId, { text: placeholder });
+                        const linkMsg = await activeSock.sendMessage(groupId, { text: "⏳ Mengambil link..." });
                         if (linkMsg?.key) {
                             setTimeout(async () => {
                                 try {
@@ -358,25 +384,30 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                             sentMessagesRecord.set(mainMsg.key.id, { groupId, timestamp: Date.now() });
                             return mainMsg.key.id;
                         }
-                    }
+                    } 
+                    
+                    // --- 2. EDIT MODE NORMAL (TEKS BIASA / BUKAN SALURAN) ---
+                    // Cukup 1 pesan saja, tidak perlu link di bawah teks (Smart Split)
+                    else {
+                        console.log(`[BYPASS] Normal Edit: Mengirim pesan teks tunggal untuk grup ${groupId}...`);
+                        // Kirim teks asli tapi buang link-nya dulu agar tidak terdeteksi bot penjaga
+                        const safeContent = originalContent.replace(linkRegex, '').trim() || "Promosi Terbaru:";
+                        const firstMsg = await activeSock.sendMessage(groupId, { text: safeContent, contextInfo: contextInfo });
 
-                    // --- EDIT MODE NORMAL (BUKAN SALURAN) ---
-                    console.log(`[BYPASS] Mengaktifkan teknik Edit Mode untuk grup ${groupId}...`);
-                    const safeContent = originalContent.replace(linkRegex, '[Link menyusul..]');
-                    const firstMsg = await activeSock.sendMessage(groupId, { text: safeContent, contextInfo: contextInfo });
-
-                    if (firstMsg?.key) {
-                        const targetKey = firstMsg.key;
-                        setTimeout(async () => {
-                            try {
-                                if (!activeSock) return;
-                                await activeSock.sendMessage(groupId, { edit: targetKey, text: originalContent, contextInfo: contextInfo });
-                                console.log(`[BYPASS] ✅ EDIT BERHASIL di ${groupId}`);
-                            } catch (e) {
-                                console.error(`[BYPASS] ❌ EDIT GAGAL:`, e.message);
-                            }
-                        }, 5000);
-                        return targetKey.id;
+                        if (firstMsg?.key) {
+                            const targetKey = firstMsg.key;
+                            setTimeout(async () => {
+                                try {
+                                    if (!activeSock) return;
+                                    // Edit pesan tadi menjadi pesan asli (yang ada link-nya)
+                                    await activeSock.sendMessage(groupId, { edit: targetKey, text: originalContent, contextInfo: contextInfo });
+                                    console.log(`[BYPASS] ✅ EDIT BERHASIL di ${groupId}`);
+                                } catch (e) {
+                                    console.error(`[BYPASS] ❌ EDIT GAGAL:`, e.message);
+                                }
+                            }, 5000);
+                            return targetKey.id;
+                        }
                     }
                 }
             }
@@ -715,6 +746,8 @@ async function startBot() {
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 0, // Jangan timeout saat query berat
     });
+
+    store.bind(sock.ev);
 
     if (!sock.authState.creds.registered) {
         loginMethod = 'prompt'; // Sedang memilih
