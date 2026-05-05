@@ -831,10 +831,16 @@ async function startBot() {
                        "";
 
             const senderJid = msg.key.participant || msg.key.remoteJid || "";
-            const senderNumber = senderJid ? senderJid.split('@')[0] : "";
-            const isOwner = fromMe || ownerNumbers.includes(senderNumber) || ownerNumbers.includes(senderJid);
+            const senderNumber = (senderJid || "").split('@')[0].split(':')[0];
+            
+            // Log untuk debug pengirim
+            if (text) {
+                console.log(`[MSG] Dari: ${senderNumber} | Teks: ${text.substring(0, 50)}`);
+            }
 
-            if (!isOwner) return; // HANYA PROSES COMMAND JIKA DARI DIRI SENDIRI ATAU OWNER
+            const isOwner = fromMe || ownerNumbers.some(num => num.includes(senderNumber));
+
+            if (!isOwner) return; 
 
             const isCommand = text.startsWith('.');
 
