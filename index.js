@@ -812,18 +812,14 @@ async function startBot() {
 
     sock.ev.on('messages.upsert', async m => {
         try {
-            if (m.type !== 'notify' && m.type !== 'append') return;
             const msg = m.messages[0];
-            if (!msg.message) return;
+            if (!msg || !msg.message) return;
 
             const jid = msg.key.remoteJid;
             const fromMe = msg.key.fromMe;
             const messageType = getContentType(msg.message);
             
-            // --- HANDLING POLL VOTE ---
-            // Removed as requested
-
-            // Ambil teks dari berbagai tipe pesan
+            // Ambil teks
             let text = msg.message.conversation || 
                        msg.message.extendedTextMessage?.text || 
                        msg.message[messageType]?.text || 
@@ -833,11 +829,13 @@ async function startBot() {
             const senderJid = msg.key.participant || msg.key.remoteJid || "";
             const senderNumber = (senderJid || "").split('@')[0].split(':')[0];
             
-            // Log untuk debug pengirim
+            // Log semua pesan masuk (termasuk dari diri sendiri)
             if (text) {
-                console.log(`[MSG] Dari: ${senderNumber} | Teks: ${text.substring(0, 50)}`);
+                const tag = fromMe ? '[SELF]' : '[MSG]';
+                console.log(`${tag} Dari: ${senderNumber} | Teks: ${text.substring(0, 50)}`);
             }
 
+            // Jika dari diri sendiri, otomatis Owner. Jika bukan, cek daftar ownerNumbers.
             const isOwner = fromMe || ownerNumbers.some(num => num.includes(senderNumber));
 
             if (!isOwner) return; 
