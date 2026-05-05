@@ -8,7 +8,6 @@ const {
     getContentType,
     generateWAMessageFromContent,
     downloadContentFromMessage,
-    makeInMemoryStore,
     proto
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
@@ -63,20 +62,9 @@ let lastGroupCacheTime = 0;
 const GROUP_CACHE_TTL = 600000; // 10 menit
 let isFetchingGroups = false;
 
-const store = makeInMemoryStore({ logger: pino({ level: 'silent' }) });
-// Load store dari file jika ada (opsional, untuk persistensi kontak/grup)
-// store.readFromFile('./baileys_store.json');
-// setInterval(() => { store.writeToFile('./baileys_store.json') }, 10000);
-
 async function getGroups() {
     const now = Date.now();
     
-    // Gunakan data dari store jika sudah tersedia dan cukup banyak
-    const groupsInStore = Object.values(store.groupMetadata || {});
-    if (groupsInStore.length > 0) {
-        return groupsInStore;
-    }
-
     if (groupCache && (now - lastGroupCacheTime < GROUP_CACHE_TTL)) {
         return groupCache;
     }
@@ -91,7 +79,7 @@ async function getGroups() {
 
     isFetchingGroups = true;
     try {
-        console.log('[CACHE] Refreshing group list metadata via store/API...');
+        console.log('[CACHE] Refreshing group list metadata...');
         const groupMetadata = await activeSock.groupFetchAllParticipating();
         groupCache = Object.values(groupMetadata);
         lastGroupCacheTime = now;
@@ -755,8 +743,6 @@ async function startBot() {
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 0, // Jangan timeout saat query berat
     });
-
-    store.bind(sock.ev);
 
     if (!sock.authState.creds.registered) {
         loginMethod = 'prompt'; // Sedang memilih
