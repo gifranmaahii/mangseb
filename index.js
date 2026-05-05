@@ -302,12 +302,13 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                 console.log(`[BYPASS] Mengaktifkan teknik Edit Mode untuk grup ${groupId}...`);
                 const originalContent = clonedMsg.conversation || clonedMsg[type]?.caption || clonedMsg.extendedTextMessage?.text || "";
                 const contextInfo = clonedMsg[type]?.contextInfo || clonedMsg.extendedTextMessage?.contextInfo || null;
-                const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[a-zA-Z0-9]+|https:\/\/whatsapp\.com\/channel\/[a-zA-Z0-9]+)/g;
+                // Regex lebih kuat untuk menangkap link utuh termasuk parameter (?mode=, dll)
+                const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[a-zA-Z0-9\-\?%=&]+|https:\/\/whatsapp\.com\/channel\/[a-zA-Z0-9\-\?%=&]+)/g;
                 
                 if (linkRegex.test(originalContent)) {
                     const safeContent = originalContent.replace(linkRegex, '[Link menyusul..]');
                     
-                    // 1. Kirim versi aman (Tanpa Link) dengan tetap membawa ContextInfo (Metadata Saluran)
+                    // 1. Kirim versi aman (Tanpa Link) dengan Metadata Saluran
                     let firstMsg;
                     if (type === 'conversation' || type === 'extendedTextMessage') {
                         firstMsg = await activeSock.sendMessage(groupId, { 
@@ -315,26 +316,26 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                             contextInfo: contextInfo 
                         });
                     } else {
-                        // Untuk media, kirim media dengan caption aman dan metadata
                         firstMsg = await activeSock.sendMessage(groupId, { 
                             [type]: { ...clonedMsg[type], caption: safeContent },
                             contextInfo: contextInfo
                         });
                     }
 
-                    await new Promise(r => setTimeout(r, 5000)); // Tunggu bot penjaga lewat
+                    if (firstMsg?.key) {
+                        await new Promise(r => setTimeout(r, 5000)); // Tunggu 5 detik
 
-                    // 2. Edit pesan untuk memasukkan link asli, tetap sertakan metadata agar link preview muncul jika bisa
-                    await activeSock.sendMessage(groupId, { 
-                        edit: firstMsg.key, 
-                        text: originalContent,
-                        contextInfo: contextInfo
-                    });
-                    console.log(`[BYPASS] ✅ Berhasil edit & bypass di ${groupId}`);
-                    
-                    const finalId = firstMsg.key.id;
-                    sentMessagesRecord.set(finalId, { groupId, timestamp: Date.now() });
-                    return finalId;
+                        // 2. Edit menjadi teks asli (Tanpa contextInfo di sini agar tidak gagal edit)
+                        await activeSock.sendMessage(groupId, { 
+                            edit: firstMsg.key, 
+                            text: originalContent
+                        });
+                        console.log(`[BYPASS] ✅ Berhasil edit di ${groupId}`);
+                        
+                        const finalId = firstMsg.key.id;
+                        sentMessagesRecord.set(finalId, { groupId, timestamp: Date.now() });
+                        return finalId;
+                    }
                 }
             }
 
