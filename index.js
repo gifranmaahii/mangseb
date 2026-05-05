@@ -1030,43 +1030,84 @@ async function startBot() {
             })();
         }
 
-        if (command === '.listgrup' || command === '.cekgrup') {
-            const groups = await getGroups();
-            if (groups.length === 0) return await sock.sendMessage(jid, { text: '⚠️ Tidak ada grup yang ditemukan.' });
-
+        // ==========================================
+        // COMMAND: .listgrup [halaman]
+        // ==========================================
+        if (command === '.listgrup') {
             const page = parseInt(args[1]) || 1;
-            const perPage = 25; // Batasi per halaman agar tidak crash (OOM)
-            const totalPages = Math.ceil(groups.length / perPage);
+            const pageSize = 25;
             
-            if (page > totalPages) {
-                return await sock.sendMessage(jid, { text: `❌ Halaman ${page} tidak tersedia. Total: ${totalPages} halaman.` });
+            await sock.sendMessage(jid, { text: '⏳ Sedang mengambil daftar grup...' });
+            const allGroups = await getGroups();
+            
+            if (allGroups.length === 0) {
+                return await sock.sendMessage(jid, { text: '⚠️ Tidak ada grup yang ditemukan.' });
             }
 
-            const start = (page - 1) * perPage;
-            const currentGroups = groups.slice(start, start + perPage);
+            const totalPages = Math.ceil(allGroups.length / pageSize);
+            if (page > totalPages) {
+                return await sock.sendMessage(jid, { text: `❌ Halaman ${page} tidak tersedia. Total halaman: ${totalPages}` });
+            }
+
+            const startIdx = (page - 1) * pageSize;
+            const endIdx = startIdx + pageSize;
+            const pagedGroups = allGroups.slice(startIdx, endIdx);
 
             let response = `📋 *DAFTAR GRUP (Hal ${page}/${totalPages})*\n`;
-            response += `_Total: ${groups.length} Grup_\n\n`;
+            response += `Total: ${allGroups.length} grup\n\n`;
 
-            currentGroups.forEach((group, i) => {
-                const realIndex = start + i + 1;
-                const isBlacklisted = blacklistedGroups.includes(group.id);
-                const isAdminOnly = group.announce; 
-                const isAnnounceGroup = group.isCommunityAnnounce; 
+            pagedGroups.forEach((g, i) => {
+                const isBlacklisted = blacklistedGroups.includes(g.id);
+                const isGuarded = guardedGroups.includes(g.id);
+                let status = isBlacklisted ? '🚫' : (isGuarded ? '🛡️' : '✅');
                 
-                let status = isAdminOnly ? '🔒' : '🔓';
-                if (isAnnounceGroup) status = '📢';
-                if (isBlacklisted) status += ' 🚫';
-                
-                // Format lebih ringkas untuk menghemat memori
-                response += `${realIndex}. *${group.subject.substring(0, 25)}* (${status})\nID: ${group.id}\n\n`;
+                response += `${startIdx + i + 1}. *${g.subject}*\nID: \`${g.id}\` [${status}]\n\n`;
             });
 
-            if (totalPages > 1) {
-                response += `💡 *Tip:* Ketik \`.listgrup ${page < totalPages ? page + 1 : 1}\` untuk melihat halaman lain.`;
+            if (page < totalPages) {
+                response += `\n💡 Ketik \`.listgrup ${page + 1}\` untuk halaman berikutnya.`;
             }
-            
+
             await sock.sendMessage(jid, { text: response });
+            return;
+        }
+
+        // ==========================================
+        // COMMAND: .cekgrup [nama]
+        // ==========================================
+        if (command === '.cekgrup') {
+            const query = args.slice(1).join(' ').toLowerCase();
+            if (!query) {
+                return await sock.sendMessage(jid, { text: '❌ Gunakan format: `.cekgrup nama_grup`' });
+            }
+
+            await sock.sendMessage(jid, { text: `🔍 Mencari grup dengan nama: "${query}"...` });
+            const allGroups = await getGroups();
+            const filtered = allGroups.filter(g => g.subject.toLowerCase().includes(query));
+
+            if (filtered.length === 0) {
+                return await sock.sendMessage(jid, { text: `❌ Tidak ditemukan grup dengan nama "${query}".` });
+            }
+
+            let response = `🔍 *HASIL PENCARIAN GRUP*\n`;
+            response += `Ditemukan: ${filtered.length} grup\n\n`;
+
+            filtered.slice(0, 15).forEach((g, i) => {
+                const isBlacklisted = blacklistedGroups.includes(g.id);
+                const isGuarded = guardedGroups.includes(g.id);
+                let status = isBlacklisted ? '🚫' : (isGuarded ? '🛡️' : '✅');
+                
+                response += `${i + 1}. *${g.subject}*\n`;
+                response += `🆔 ID: \`${g.id}\` [${status}]\n`;
+                response += `👥 Peserta: ${g.participants?.length || '?'}\n\n`;
+            });
+
+            if (filtered.length > 15) {
+                response += `\n_(Hanya menampilkan 15 hasil pertama)_`;
+            }
+
+            await sock.sendMessage(jid, { text: response });
+            return;
         }
 
         if (command === '.blacklist') {
