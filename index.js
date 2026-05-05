@@ -812,44 +812,36 @@ async function startBot() {
 
     sock.ev.on('messages.upsert', async m => {
         try {
-            // Log mentah untuk mencari tahu kenapa pesan Owner tidak terbaca
-            // console.log('[RAW-UPSERT]', JSON.stringify(m, null, 2));
-
             const msg = m.messages[0];
-            if (!msg) return;
+            if (!msg || !msg.message) return;
 
             const jid = msg.key.remoteJid;
             const fromMe = msg.key.fromMe;
             
-            // Ekstraksi teks yang lebih agresif
-            const messageContent = msg.message;
-            if (!messageContent) return;
-
-            const type = getContentType(messageContent);
+            // Ekstraksi teks
+            const type = getContentType(msg.message);
             let text = "";
-            
-            if (type === 'conversation') text = messageContent.conversation;
-            else if (type === 'extendedTextMessage') text = messageContent.extendedTextMessage.text;
-            else if (type === 'imageMessage') text = messageContent.imageMessage.caption;
-            else if (type === 'videoMessage') text = messageContent.videoMessage.caption;
-            else if (messageContent[type]?.text) text = messageContent[type].text;
-            else if (messageContent[type]?.caption) text = messageContent[type].caption;
+            if (type === 'conversation') text = msg.message.conversation;
+            else if (type === 'extendedTextMessage') text = msg.message.extendedTextMessage.text;
+            else if (msg.message[type]?.caption) text = msg.message[type].caption;
+            else if (msg.message[type]?.text) text = msg.message[type].text;
 
             const senderJid = msg.key.participant || msg.key.remoteJid || "";
-            const senderNumber = (senderJid || "").split('@')[0].split(':')[0];
+            const senderNumber = senderJid.replace(/[^0-9]/g, ''); // Ambil angka saja
             
-            // Log setiap aktivitas pesan yang masuk ke sistem
-            console.log(`[EVENT] Dari: ${senderNumber} | Me: ${fromMe} | Tipe: ${type} | Teks: ${text.substring(0, 30)}`);
+            // LOG DEBUG - Agar kita tahu pesan Anda masuk atau tidak
+            if (text) {
+                console.log(`[LOG] Dari: ${senderNumber} | Me: ${fromMe} | Teks: ${text.substring(0, 40)}`);
+            }
 
-            const isOwner = fromMe || ownerNumbers.some(num => num.includes(senderNumber));
+            // Cek Owner: Jika dari diri sendiri (Self-Chat) atau ada di daftar ownerNumbers
+            const isOwner = fromMe || ownerNumbers.some(owner => senderNumber.includes(owner.replace(/[^0-9]/g, '')));
 
             if (!isOwner) return; 
 
             const isCommand = text.startsWith('.');
-
-            // --- LOGGING FILTER UNTUK COMMAND ---
             if (isCommand) {
-                console.log(`[CMD] Executing: ${text.split(' ')[0]} from ${senderNumber}`);
+                console.log(`[CMD] Menjalankan: ${text.split(' ')[0]} oleh ${senderNumber}`);
             }
 
             // --- DETEKSI PENGHAPUSAN PESAN (REVOKE/DELETE) ---
