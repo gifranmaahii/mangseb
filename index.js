@@ -61,6 +61,7 @@ let intentionalDeletions = new Map(); // ID Pesan -> timestamp
 let groupCache = null;
 let lastGroupCacheTime = 0;
 const GROUP_CACHE_TTL = 300000; // 5 menit
+let isFetchingGroups = false;
 
 async function getGroups() {
     const now = Date.now();
@@ -68,11 +69,27 @@ async function getGroups() {
         return groupCache;
     }
     if (!activeSock) return [];
-    console.log('[CACHE] Refreshing group list metadata...');
-    const groupMetadata = await activeSock.groupFetchAllParticipating();
-    groupCache = Object.values(groupMetadata);
-    lastGroupCacheTime = now;
-    return groupCache;
+    
+    // Cegah fetch ganda secara bersamaan (Race Condition)
+    if (isFetchingGroups) {
+        while (isFetchingGroups) {
+            await new Promise(r => setTimeout(r, 1000));
+        }
+        return groupCache || [];
+    }
+
+    isFetchingGroups = true;
+    try {
+        console.log('[CACHE] Refreshing group list metadata...');
+        const groupMetadata = await activeSock.groupFetchAllParticipating();
+        groupCache = Object.values(groupMetadata);
+        lastGroupCacheTime = now;
+    } catch (e) {
+        console.error('[CACHE] Gagal mengambil daftar grup:', e.message);
+    } finally {
+        isFetchingGroups = false;
+    }
+    return groupCache || [];
 }
 
 // Cleanup interval lebih sering (setiap 2 menit)
@@ -976,19 +993,42 @@ async function startBot() {
             })();
         }
 
-        if (command === '.listgrup') {
+        if (command === '.listgrup' || command === '.cekgrup') {
             const groups = await getGroups();
-            let response = `*DAFTAR GRUP (${groups.length} Grup)*\n\n`;
-            groups.forEach((group, i) => {
+            if (groups.length === 0) return await sock.sendMessage(jid, { text: '⚠️ Tidak ada grup yang ditemukan.' });
+
+            const page = parseInt(args[1]) || 1;
+            const perPage = 25; // Batasi per halaman agar tidak crash (OOM)
+            const totalPages = Math.ceil(groups.length / perPage);
+            
+            if (page > totalPages) {
+                return await sock.sendMessage(jid, { text: `❌ Halaman ${page} tidak tersedia. Total: ${totalPages} halaman.` });
+            }
+
+            const start = (page - 1) * perPage;
+            const currentGroups = groups.slice(start, start + perPage);
+
+            let response = `📋 *DAFTAR GRUP (Hal ${page}/${totalPages})*\n`;
+            response += `_Total: ${groups.length} Grup_\n\n`;
+
+            currentGroups.forEach((group, i) => {
+                const realIndex = start + i + 1;
                 const isBlacklisted = blacklistedGroups.includes(group.id);
-                const isAdminOnly = group.announce; // Jika true, hanya admin yang bisa chat
-                const isAnnounceGroup = group.isCommunityAnnounce; // Grup pengumuman komunitas
+                const isAdminOnly = group.announce; 
+                const isAnnounceGroup = group.isCommunityAnnounce; 
                 
-                let statusIcon = isAdminOnly ? '🔒 (Admin Only)' : '🔓 (Terbuka)';
-                if (isAnnounceGroup) statusIcon = '📢 (Pengumuman)';
+                let status = isAdminOnly ? '🔒' : '🔓';
+                if (isAnnounceGroup) status = '📢';
+                if (isBlacklisted) status += ' 🚫';
                 
-                response += `${i + 1}. ${group.subject} ${isBlacklisted ? '🚫' : ''}\nStatus: ${statusIcon}\nID: ${group.id}\n\n`;
+                // Format lebih ringkas untuk menghemat memori
+                response += `${realIndex}. *${group.subject.substring(0, 25)}* (${status})\nID: ${group.id}\n\n`;
             });
+
+            if (totalPages > 1) {
+                response += `💡 *Tip:* Ketik \`.listgrup ${page < totalPages ? page + 1 : 1}\` untuk melihat halaman lain.`;
+            }
+            
             await sock.sendMessage(jid, { text: response });
         }
 
@@ -1707,11 +1747,22 @@ async function startBot() {
             if (guardedGroups.length === 0) return await sock.sendMessage(jid, { text: '📋 Daftar grup berpenjaga kosong.' });
             const allGroups = await getGroups();
             
-            let txt = `📋 *DAFTAR GRUP BERPENJAGA BOT (${guardedGroups.length})*\n\n`;
-            guardedGroups.forEach((id, i) => {
+            const page = parseInt(args[1]) || 1;
+            const perPage = 30;
+            const totalPages = Math.ceil(guardedGroups.length / perPage);
+            
+            if (page > totalPages) return await sock.sendMessage(jid, { text: `❌ Halaman ${page} tidak tersedia.` });
+
+            const start = (page - 1) * perPage;
+            const currentGuarded = guardedGroups.slice(start, start + perPage);
+
+            let txt = `📋 *GRUP BERPENJAGA (Hal ${page}/${totalPages})*\n\n`;
+            currentGuarded.forEach((id, i) => {
                 const group = allGroups.find(g => g.id === id);
-                txt += `${i + 1}. ${group ? group.subject : id}\n`;
+                txt += `${start + i + 1}. ${group ? group.subject : id}\n`;
             });
+            
+            if (totalPages > 1) txt += `\n💡 Ketik \`.listguarded ${page + 1}\` untuk lanjut.`;
             await sock.sendMessage(jid, { text: txt });
         }
 
@@ -1774,7 +1825,7 @@ async function startBot() {
         if (command === '.menu' || command === '.help') {
             const menuText = `┏━『 *MANGSEB BOT* 』
 ┃
-┣⌬ *.listgrup* (Cek ID Grup)
+┣⌬ *.listgrup* / *.cekgrup* (Cek ID Grup)
 ┣⌬ *.setpesan* (Set pesan utama)
 ┣⌬ *.addpesan* (Tambah rotasi)
 ┣⌬ *.cekpesan* (Lihat daftar)
