@@ -57,16 +57,42 @@ const scrapedLinksFile = './scraped_links.json';
 let sentMessagesRecord = new Map(); // ID Pesan -> { groupId, timestamp }
 let intentionalDeletions = new Map(); // ID Pesan -> timestamp
 
-// Cleanup interval setiap 5 menit
+// Cache untuk daftar grup (mengurangi heap spike)
+let groupCache = null;
+let lastGroupCacheTime = 0;
+const GROUP_CACHE_TTL = 300000; // 5 menit
+
+async function getGroups() {
+    const now = Date.now();
+    if (groupCache && (now - lastGroupCacheTime < GROUP_CACHE_TTL)) {
+        return groupCache;
+    }
+    if (!activeSock) return [];
+    console.log('[CACHE] Refreshing group list metadata...');
+    const groupMetadata = await activeSock.groupFetchAllParticipating();
+    groupCache = Object.values(groupMetadata);
+    lastGroupCacheTime = now;
+    return groupCache;
+}
+
+// Cleanup interval lebih sering (setiap 2 menit)
 setInterval(() => {
     const now = Date.now();
+    // Bersihkan record pesan yang sudah lewat 5 menit (sebelumnya 10 menit)
     for (const [id, data] of sentMessagesRecord.entries()) {
-        if (now - data.timestamp > 600000) sentMessagesRecord.delete(id);
+        if (now - data.timestamp > 300000) sentMessagesRecord.delete(id);
     }
+    // Bersihkan record delete yang sudah lewat 1 menit
     for (const [id, timestamp] of intentionalDeletions.entries()) {
         if (now - timestamp > 60000) intentionalDeletions.delete(id);
     }
-}, 300000);
+    
+    // Paksa GC jika tersedia (jalankan dengan --expose-gc)
+    if (global.gc) {
+        global.gc();
+        console.log('[MEM] Garbage Collection executed.');
+    }
+}, 120000);
 
 // Load scraped links
 if (fs.existsSync(scrapedLinksFile)) {
@@ -186,9 +212,9 @@ async function handleJadibot(senderJid, type, number = '') {
             botSock.end(new Error('Bot connected, moving to PM2'));
             
             const pm2Name = `bot_jaseb_${number || Date.now().toString().slice(-6)}`;
-            exec(`pm2 start index.js --node-args="--max-old-space-size=300" --name ${pm2Name} -- ${sessionFolder}`, (error, stdout, stderr) => {
+            exec(`pm2 start index.js --node-args="--max-old-space-size=300 --expose-gc" --name ${pm2Name} -- ${sessionFolder}`, (error, stdout, stderr) => {
                 if (error) {
-                    activeSock.sendMessage(senderJid, { text: `❌ Gagal menjalankan bot di PM2: ${error.message}\nCoba jalankan manual: node --max-old-space-size=300 index.js ${sessionFolder}` });
+                    activeSock.sendMessage(senderJid, { text: `❌ Gagal menjalankan bot di PM2: ${error.message}\nCoba jalankan manual: node --max-old-space-size=300 --expose-gc index.js ${sessionFolder}` });
                 } else {
                     activeSock.sendMessage(senderJid, { text: `🚀 *BOT JASEB AKTIF!*\n\nStatus PM2: Berhasil ✅\nKetik .menu di nomor bot baru Anda untuk mulai mengatur spam.` });
                 }
@@ -286,9 +312,7 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                         firstMsg = await activeSock.sendMessage(groupId, { text: safeContent });
                     } else {
                         // Untuk media, kirim media dengan caption aman
-                        let mediaContent = { ...clonedMsg[type] };
-                        mediaContent.caption = safeContent;
-                        firstMsg = await activeSock.sendMessage(groupId, { [type]: mediaContent });
+                        firstMsg = await activeSock.sendMessage(groupId, { [type]: { ...clonedMsg[type], caption: safeContent } });
                     }
 
                     await new Promise(r => setTimeout(r, 5000)); // Tunggu bot penjaga lewat
@@ -423,8 +447,7 @@ async function runSpamCycle() {
                 return;
             }
 
-            const groupMetadata = await activeSock.groupFetchAllParticipating();
-            const groups = Object.values(groupMetadata).reverse();
+            const groups = (await getGroups()).slice().reverse();
             
             let successCount = 0;
             let failCount = 0;
@@ -489,7 +512,7 @@ async function runSpamCycle() {
                 console.log(`[SPAM] [${i+1}/${groups.length}] Mengirim ke: ${group.subject}...`);
                 let messagesToSend = [];
                 if (doubleMessageMode && savedMessage && savedMessages.length > 0) {
-                    messagesToSend.push(JSON.parse(JSON.stringify(savedMessage)));
+                    messagesToSend.push(savedMessage); // push as is, cloning done in sendWithRetry
                     messagesToSend.push(getNextMessageToUse());
                 } else {
                     messagesToSend.push(getNextMessageToUse());
@@ -632,7 +655,11 @@ async function startBot() {
         printQRInTerminal: true, // Biarkan true agar QR muncul jika perlu
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
+        markOnline: false, // Hemat bandwidth/RAM
+        shouldSyncHistoryMessage: () => false, // Jangan sync chat lama
         retryRequestDelayMs: 5000,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 0, // Jangan timeout saat query berat
     });
 
     if (!sock.authState.creds.registered) {
@@ -812,12 +839,17 @@ async function startBot() {
                 try {
                     await sock.sendMessage(jid, { text: "⏳ Mendownload file kontak..." });
                     const stream = await downloadContentFromMessage(isQuotedDocument, 'document');
-                    let chunks = [];
+                    let buffer = Buffer.alloc(0);
                     for await(const chunk of stream) {
-                        chunks.push(chunk);
+                        buffer = Buffer.concat([buffer, chunk]);
+                        // Batasi ukuran untuk mencegah crash
+                        if (buffer.length > 10 * 1024 * 1024) { 
+                             sock.sendMessage(jid, { text: "❌ File terlalu besar (maks 10MB)." }).catch(() => {});
+                             break;
+                        }
                     }
-                    let buffer = Buffer.concat(chunks);
                     rawTextData = buffer.toString('utf-8');
+                    buffer = null; // Free memory immediately
                 } catch(e) {
                     return await sock.sendMessage(jid, { text: `❌ Gagal mendownload dokumen: ${e.message}` });
                 }
@@ -908,8 +940,7 @@ async function startBot() {
         }
 
         if (command === '.listgrup') {
-            const groupMetadata = await sock.groupFetchAllParticipating();
-            const groups = Object.values(groupMetadata);
+            const groups = await getGroups();
             let response = `*DAFTAR GRUP (${groups.length} Grup)*\n\n`;
             groups.forEach((group, i) => {
                 const isBlacklisted = blacklistedGroups.includes(group.id);
@@ -925,8 +956,7 @@ async function startBot() {
         }
 
         if (command === '.blacklist') {
-            const groupMetadata = await sock.groupFetchAllParticipating();
-            const groups = Object.values(groupMetadata);
+            const groups = await getGroups();
             const available = groups.filter(g => !blacklistedGroups.includes(g.id));
 
             if (args.length === 1) {
@@ -969,8 +999,7 @@ async function startBot() {
         }
 
         if (command === '.unblacklist') {
-            const groupMetadataList = await sock.groupFetchAllParticipating();
-            const groupsList = Object.values(groupMetadataList);
+            const groupsList = await getGroups();
             const blacklisted = groupsList.filter(g => blacklistedGroups.includes(g.id));
 
             if (args.length === 1) {
@@ -1122,8 +1151,7 @@ async function startBot() {
         if (command === '.cleangrup') {
             await sock.sendMessage(jid, { text: '⏳ *Memindai grup...*\nMencari grup "Admin Only" di mana bot tidak bisa mengirim pesan...' });
             try {
-                const groupMetadataList = await sock.groupFetchAllParticipating();
-                const groupsList = Object.values(groupMetadataList);
+                const groupsList = await getGroups();
                 let leaveCount = 0;
                 
                 for (const group of groupsList) {
@@ -1358,8 +1386,7 @@ async function startBot() {
 
             // Run in background
             (async () => {
-                const groupMetadata = await sock.groupFetchAllParticipating();
-                const groups = Object.values(groupMetadata).reverse();
+                const groups = (await getGroups()).slice().reverse();
                 
                 let successCount = 0;
                 let failCount = 0;
@@ -1571,8 +1598,7 @@ async function startBot() {
         }
 
         if (command === '.addguarded') {
-            const groupMetadataList = await sock.groupFetchAllParticipating();
-            const groupsList = Object.values(groupMetadataList);
+            const groupsList = await getGroups();
             let input = args[1];
             let targetGroup = null;
 
@@ -1622,8 +1648,7 @@ async function startBot() {
 
         if (command === '.listguarded') {
             if (guardedGroups.length === 0) return await sock.sendMessage(jid, { text: '📋 Daftar grup berpenjaga kosong.' });
-            const groupMetadataList = await sock.groupFetchAllParticipating();
-            const allGroups = Object.values(groupMetadataList);
+            const allGroups = await getGroups();
             
             let txt = `📋 *DAFTAR GRUP BERPENJAGA BOT (${guardedGroups.length})*\n\n`;
             guardedGroups.forEach((id, i) => {
@@ -1737,8 +1762,7 @@ async function startBot() {
                 return await sock.sendMessage(jid, { text: '❌ Anda belum mengatur pesan promosi! Setel dulu dengan .setpesan' });
             }
 
-            const groupMetadata = await sock.groupFetchAllParticipating();
-            const allGroups = Object.values(groupMetadata);
+            const allGroups = await getGroups();
             
             let input = args[1]; 
             let targetGroup = null;
