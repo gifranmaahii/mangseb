@@ -1,3 +1,12 @@
+const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    DisconnectReason,
+    fetchLatestBaileysVersion,
+    makeCacheableSignalKeyStore,
+    jidNormalizedUser,
+    getContentType,
+    generateWAMessageFromContent,
     downloadContentFromMessage,
     makeInMemoryStore,
     proto
