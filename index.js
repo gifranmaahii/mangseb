@@ -307,8 +307,8 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                 if (linkRegex.test(originalContent)) {
                     const safeContent = originalContent.replace(linkRegex, '[Link menyusul..]');
                     
-                    console.log(`[BYPASS] Mengirim pesan awal (Newsletter Style) ke ${groupId}...`);
-                    // Mencoba kirim dengan metadata saluran di awal
+                    console.log(`[BYPASS] Mengirim pesan awal (Style Mewah) ke ${groupId}...`);
+                    // Kirim dengan metadata saluran agar tampilan awal sudah bagus
                     const firstMsg = await activeSock.sendMessage(groupId, { 
                         text: safeContent, 
                         contextInfo: contextInfo 
@@ -319,23 +319,16 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                         setTimeout(async () => {
                             try {
                                 if (!activeSock) return;
-                                console.log(`[BYPASS] Mencoba EDIT (Newsletter Style) di ${groupId}...`);
+                                console.log(`[BYPASS] Mencoba EDIT ke teks asli (Style Mewah) di ${groupId}...`);
                                 
-                                // Gunakan RelayMessage dengan struktur lengkap agar metadata saluran tetap ada
-                                await activeSock.relayMessage(groupId, {
-                                    protocolMessage: {
-                                        key: targetKey,
-                                        type: 14,
-                                        editedMessage: {
-                                            extendedTextMessage: {
-                                                text: originalContent,
-                                                contextInfo: contextInfo
-                                            }
-                                        }
-                                    }
-                                }, {});
+                                // Gunakan sendMessage standar + contextInfo agar tampilan tetap mewah & tidak error
+                                await activeSock.sendMessage(groupId, { 
+                                    edit: targetKey, 
+                                    text: originalContent,
+                                    contextInfo: contextInfo
+                                });
                                 
-                                console.log(`[BYPASS] ✅ EDIT BERHASIL DI-RELAY ke ${groupId}`);
+                                console.log(`[BYPASS] ✅ EDIT BERHASIL di ${groupId}`);
                             } catch (editErr) {
                                 console.error(`[BYPASS] ❌ EDIT GAGAL di ${groupId}:`, editErr.message);
                             }
