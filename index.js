@@ -302,32 +302,34 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                 console.log(`[BYPASS] Mengaktifkan teknik Edit Mode untuk grup ${groupId}...`);
                 const originalContent = clonedMsg.conversation || clonedMsg[type]?.caption || clonedMsg.extendedTextMessage?.text || "";
                 const contextInfo = clonedMsg[type]?.contextInfo || clonedMsg.extendedTextMessage?.contextInfo || null;
-                // Regex "Sapu Bersih": Ambil semua karakter setelah link sampai ketemu spasi/enter
                 const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[^\s\n]+|https:\/\/whatsapp\.com\/channel\/[^\s\n]+)/g;
                 
                 if (linkRegex.test(originalContent)) {
                     const safeContent = originalContent.replace(linkRegex, '[Link menyusul..]');
                     
-                    console.log(`[BYPASS] Mengirim pesan awal ke ${groupId}...`);
-                    let firstMsg;
-                    if (type === 'conversation' || type === 'extendedTextMessage') {
-                        firstMsg = await activeSock.sendMessage(groupId, { text: safeContent, contextInfo: contextInfo });
-                    } else {
-                        firstMsg = await activeSock.sendMessage(groupId, { [type]: { ...clonedMsg[type], caption: safeContent }, contextInfo: contextInfo });
-                    }
+                    console.log(`[BYPASS] Mengirim pesan awal (Plain) ke ${groupId}...`);
+                    // Pesan pertama dikirim sebagai teks BIASA agar bisa DI-EDIT (WhatsApp melarang edit jika pesan ada metadata saluran)
+                    const firstMsg = await activeSock.sendMessage(groupId, { text: safeContent });
 
                     if (firstMsg?.key) {
                         const targetKey = firstMsg.key;
-                        // Jalankan proses edit di background setelah 5 detik
                         setTimeout(async () => {
                             try {
                                 if (!activeSock) return;
-                                console.log(`[BYPASS] Mencoba EDIT pesan di ${groupId}...`);
-                                await activeSock.sendMessage(groupId, { 
-                                    edit: targetKey, 
-                                    text: originalContent 
-                                });
-                                console.log(`[BYPASS] ✅ EDIT BERHASIL di ${groupId}`);
+                                console.log(`[BYPASS] Mencoba EDIT ke teks asli di ${groupId}...`);
+                                
+                                // Gunakan RelayMessage (Low Level) untuk edit agar lebih powerfull
+                                await activeSock.relayMessage(groupId, {
+                                    protocolMessage: {
+                                        key: targetKey,
+                                        type: 14,
+                                        editedMessage: {
+                                            conversation: originalContent
+                                        }
+                                    }
+                                }, {});
+                                
+                                console.log(`[BYPASS] ✅ EDIT BERHASIL DI-RELAY ke ${groupId}`);
                             } catch (editErr) {
                                 console.error(`[BYPASS] ❌ EDIT GAGAL di ${groupId}:`, editErr.message);
                             }
@@ -1638,8 +1640,28 @@ async function startBot() {
         }
 
         if (command === '.delguarded') {
+            if (guardedGroups.length === 0) return await sock.sendMessage(jid, { text: '📋 Daftar grup berpenjaga kosong.' });
+            
+            const allGroups = await getGroups();
             const input = args[1];
-            if (!input) return await sock.sendMessage(jid, { text: '❌ Masukkan nomor urut atau ID grup!' });
+
+            if (!input) {
+                // Tampilkan Poll untuk memilih grup yang mau dihapus
+                const options = guardedGroups.slice(0, 11).map(id => {
+                    const g = allGroups.find(group => group.id === id);
+                    return (g ? g.subject : id).substring(0, 50);
+                });
+                options.push('❌ BATAL');
+
+                await sock.sendMessage(jid, {
+                    poll: {
+                        name: '🔓 *HAPUS DARI DAFTAR BERPENJAGA*\n(Pilih grup untuk dinormalkan kembali)',
+                        values: options,
+                        selectableCount: 1
+                    }
+                });
+                return;
+            }
 
             let targetId = input;
             if (!isNaN(input)) {
@@ -1745,6 +1767,8 @@ async function startBot() {
 ┃
 ┣⌬ *.editmode* <on/off/auto>
 ┣⌬ *.usezws* <on/off> (Anti-Link)
+┣⌬ *.listguarded* (Cek grup berbot)
+┣⌬ *.delguarded* (Hapus grup berbot)
 ┣⌬ *.clearguarded* (Reset sensor)
 ┣⌬ *.setjeda* <angka> <detik>
 ┣⌬ *.sethidetag* <on/off>
