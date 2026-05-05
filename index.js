@@ -752,7 +752,12 @@ async function startBot() {
 
         setTimeout(async () => {
             console.log(`\n========================================`);
-            let opsi = await question('Pilih metode login:\n1. QR Code\n2. Pairing Code\nPilihan (1/2): ');
+            console.log(`   PILIH METODE LOGIN`);
+            console.log(`========================================`);
+            console.log(`1. QR Code`);
+            console.log(`2. Pairing Code`);
+            console.log(`========================================`);
+            let opsi = await question('Masukkan pilihan (1/2): ');
             if (opsi === '2') {
                 loginMethod = 'pairing';
                 let nomorWa = await question('Masukkan nomor WhatsApp (contoh: 628123456789): ');
