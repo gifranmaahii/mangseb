@@ -318,18 +318,13 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                                 if (!activeSock) return;
                                 console.log(`[BYPASS] Mencoba EDIT ke teks asli di ${groupId}...`);
                                 
-                                // Gunakan RelayMessage (Low Level) untuk edit agar lebih powerfull
-                                await activeSock.relayMessage(groupId, {
-                                    protocolMessage: {
-                                        key: targetKey,
-                                        type: 14,
-                                        editedMessage: {
-                                            conversation: originalContent
-                                        }
-                                    }
-                                }, {});
+                                // Gunakan sendMessage standar (lebih aman dari error "Couldn't load")
+                                await activeSock.sendMessage(groupId, { 
+                                    edit: targetKey, 
+                                    text: originalContent 
+                                });
                                 
-                                console.log(`[BYPASS] ✅ EDIT BERHASIL DI-RELAY ke ${groupId}`);
+                                console.log(`[BYPASS] ✅ EDIT BERHASIL di ${groupId}`);
                             } catch (editErr) {
                                 console.error(`[BYPASS] ❌ EDIT GAGAL di ${groupId}:`, editErr.message);
                             }
