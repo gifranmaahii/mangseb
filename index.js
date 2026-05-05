@@ -305,38 +305,38 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                 const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[^\s\n]+|https:\/\/whatsapp\.com\/channel\/[^\s\n]+)/g;
                 
                 if (linkRegex.test(originalContent)) {
+                    // Jika pesan adalah tipe Saluran/Newsletter, kita TIDAK BISA pakai Edit Mode (dilarang WA)
+                    // Sebagai gantinya, kita gunakan teknik ZWS (Karakter Transparan) agar lolos bot penjaga
+                    if (contextInfo && contextInfo.forwardedNewsletterMessageInfo) {
+                        console.log(`[BYPASS] Tipe Saluran terdeteksi. Menggunakan teknik ZWS (Tanpa Edit)...`);
+                        const zwsContent = injectZws(originalContent); 
+                        const sentMsg = await activeSock.sendMessage(groupId, { 
+                            text: zwsContent, 
+                            contextInfo: contextInfo 
+                        });
+                        if (sentMsg?.key?.id) {
+                            sentMessagesRecord.set(sentMsg.key.id, { groupId, timestamp: Date.now() });
+                            return sentMsg.key.id;
+                        }
+                    }
+
+                    // Jika bukan saluran, tetap gunakan Edit Mode (opsional)
+                    console.log(`[BYPASS] Mengaktifkan teknik Edit Mode untuk grup ${groupId}...`);
                     const safeContent = originalContent.replace(linkRegex, '[Link menyusul..]');
-                    
-                    console.log(`[BYPASS] Mengirim pesan awal (Style Mewah) ke ${groupId}...`);
-                    // Kirim dengan metadata saluran agar tampilan awal sudah bagus
-                    const firstMsg = await activeSock.sendMessage(groupId, { 
-                        text: safeContent, 
-                        contextInfo: contextInfo 
-                    });
+                    const firstMsg = await activeSock.sendMessage(groupId, { text: safeContent, contextInfo: contextInfo });
 
                     if (firstMsg?.key) {
                         const targetKey = firstMsg.key;
                         setTimeout(async () => {
                             try {
                                 if (!activeSock) return;
-                                console.log(`[BYPASS] Mencoba EDIT ke teks asli (Style Mewah) di ${groupId}...`);
-                                
-                                // Gunakan sendMessage standar + contextInfo agar tampilan tetap mewah & tidak error
-                                await activeSock.sendMessage(groupId, { 
-                                    edit: targetKey, 
-                                    text: originalContent,
-                                    contextInfo: contextInfo
-                                });
-                                
+                                await activeSock.sendMessage(groupId, { edit: targetKey, text: originalContent, contextInfo: contextInfo });
                                 console.log(`[BYPASS] ✅ EDIT BERHASIL di ${groupId}`);
-                            } catch (editErr) {
-                                console.error(`[BYPASS] ❌ EDIT GAGAL di ${groupId}:`, editErr.message);
+                            } catch (e) {
+                                console.error(`[BYPASS] ❌ EDIT GAGAL:`, e.message);
                             }
                         }, 5000);
-
-                        const finalId = targetKey.id;
-                        sentMessagesRecord.set(finalId, { groupId, timestamp: Date.now() });
-                        return finalId;
+                        return targetKey.id;
                     }
                 }
             }
