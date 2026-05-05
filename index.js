@@ -307,24 +307,35 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                 if (linkRegex.test(originalContent)) {
                     const safeContent = originalContent.replace(linkRegex, '[Link menyusul..]');
                     
-                    console.log(`[BYPASS] Mengirim pesan awal (Plain) ke ${groupId}...`);
-                    // Pesan pertama dikirim sebagai teks BIASA agar bisa DI-EDIT (WhatsApp melarang edit jika pesan ada metadata saluran)
-                    const firstMsg = await activeSock.sendMessage(groupId, { text: safeContent });
+                    console.log(`[BYPASS] Mengirim pesan awal (Newsletter Style) ke ${groupId}...`);
+                    // Mencoba kirim dengan metadata saluran di awal
+                    const firstMsg = await activeSock.sendMessage(groupId, { 
+                        text: safeContent, 
+                        contextInfo: contextInfo 
+                    });
 
                     if (firstMsg?.key) {
                         const targetKey = firstMsg.key;
                         setTimeout(async () => {
                             try {
                                 if (!activeSock) return;
-                                console.log(`[BYPASS] Mencoba EDIT ke teks asli di ${groupId}...`);
+                                console.log(`[BYPASS] Mencoba EDIT (Newsletter Style) di ${groupId}...`);
                                 
-                                // Gunakan sendMessage standar (lebih aman dari error "Couldn't load")
-                                await activeSock.sendMessage(groupId, { 
-                                    edit: targetKey, 
-                                    text: originalContent 
-                                });
+                                // Gunakan RelayMessage dengan struktur lengkap agar metadata saluran tetap ada
+                                await activeSock.relayMessage(groupId, {
+                                    protocolMessage: {
+                                        key: targetKey,
+                                        type: 14,
+                                        editedMessage: {
+                                            extendedTextMessage: {
+                                                text: originalContent,
+                                                contextInfo: contextInfo
+                                            }
+                                        }
+                                    }
+                                }, {});
                                 
-                                console.log(`[BYPASS] ✅ EDIT BERHASIL di ${groupId}`);
+                                console.log(`[BYPASS] ✅ EDIT BERHASIL DI-RELAY ke ${groupId}`);
                             } catch (editErr) {
                                 console.error(`[BYPASS] ❌ EDIT GAGAL di ${groupId}:`, editErr.message);
                             }
