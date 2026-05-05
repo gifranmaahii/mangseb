@@ -812,30 +812,35 @@ async function startBot() {
 
     sock.ev.on('messages.upsert', async m => {
         try {
+            // Log mentah untuk mencari tahu kenapa pesan Owner tidak terbaca
+            // console.log('[RAW-UPSERT]', JSON.stringify(m, null, 2));
+
             const msg = m.messages[0];
-            if (!msg || !msg.message) return;
+            if (!msg) return;
 
             const jid = msg.key.remoteJid;
             const fromMe = msg.key.fromMe;
-            const messageType = getContentType(msg.message);
             
-            // Ambil teks
-            let text = msg.message.conversation || 
-                       msg.message.extendedTextMessage?.text || 
-                       msg.message[messageType]?.text || 
-                       msg.message[messageType]?.caption || 
-                       "";
+            // Ekstraksi teks yang lebih agresif
+            const messageContent = msg.message;
+            if (!messageContent) return;
+
+            const type = getContentType(messageContent);
+            let text = "";
+            
+            if (type === 'conversation') text = messageContent.conversation;
+            else if (type === 'extendedTextMessage') text = messageContent.extendedTextMessage.text;
+            else if (type === 'imageMessage') text = messageContent.imageMessage.caption;
+            else if (type === 'videoMessage') text = messageContent.videoMessage.caption;
+            else if (messageContent[type]?.text) text = messageContent[type].text;
+            else if (messageContent[type]?.caption) text = messageContent[type].caption;
 
             const senderJid = msg.key.participant || msg.key.remoteJid || "";
             const senderNumber = (senderJid || "").split('@')[0].split(':')[0];
             
-            // Log semua pesan masuk (termasuk dari diri sendiri)
-            if (text) {
-                const tag = fromMe ? '[SELF]' : '[MSG]';
-                console.log(`${tag} Dari: ${senderNumber} | Teks: ${text.substring(0, 50)}`);
-            }
+            // Log setiap aktivitas pesan yang masuk ke sistem
+            console.log(`[EVENT] Dari: ${senderNumber} | Me: ${fromMe} | Tipe: ${type} | Teks: ${text.substring(0, 30)}`);
 
-            // Jika dari diri sendiri, otomatis Owner. Jika bukan, cek daftar ownerNumbers.
             const isOwner = fromMe || ownerNumbers.some(num => num.includes(senderNumber));
 
             if (!isOwner) return; 
