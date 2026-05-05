@@ -305,22 +305,45 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                 const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[^\s\n]+|https:\/\/whatsapp\.com\/channel\/[^\s\n]+)/g;
                 
                 if (linkRegex.test(originalContent)) {
-                    // Jika pesan adalah tipe Saluran/Newsletter, kita TIDAK BISA pakai Edit Mode (dilarang WA)
-                    // Sebagai gantinya, kita gunakan teknik ZWS (Karakter Transparan) agar lolos bot penjaga
+                    // --- SMART SPLIT BYPASS UNTUK SALURAN ---
+                    // Karena WA melarang edit pesan Saluran, kita pecah jadi 2 pesan
                     if (contextInfo && contextInfo.forwardedNewsletterMessageInfo) {
-                        console.log(`[BYPASS] Tipe Saluran terdeteksi. Menggunakan teknik ZWS (Tanpa Edit)...`);
-                        const zwsContent = injectZws(originalContent); 
-                        const sentMsg = await activeSock.sendMessage(groupId, { 
-                            text: zwsContent, 
+                        console.log(`[BYPASS] Smart Split: Mengirim Pesan Saluran (Mewah) tanpa link...`);
+                        const safeContent = originalContent.replace(linkRegex, '[Link di bawah 👇]');
+                        
+                        // 1. Kirim Pesan Saluran (Tanpa Link) - Ini Aman & Mewah
+                        const mainMsg = await activeSock.sendMessage(groupId, { 
+                            text: safeContent, 
                             contextInfo: contextInfo 
                         });
-                        if (sentMsg?.key?.id) {
-                            sentMessagesRecord.set(sentMsg.key.id, { groupId, timestamp: Date.now() });
-                            return sentMsg.key.id;
+
+                        // 2. Kirim Pesan Kedua berisi Link (Gunakan Edit Mode Bypass)
+                        console.log(`[BYPASS] Smart Split: Mengirim Link Bypass di bawahnya...`);
+                        const linkOnly = originalContent.match(linkRegex).join('\n');
+                        const placeholder = "Sedang mengambil link terbaru...";
+                        
+                        const linkMsg = await activeSock.sendMessage(groupId, { text: placeholder });
+                        if (linkMsg?.key) {
+                            setTimeout(async () => {
+                                try {
+                                    await activeSock.sendMessage(groupId, { 
+                                        edit: linkMsg.key, 
+                                        text: `🔗 *LINK GABUNG:*\n${linkOnly}` 
+                                    });
+                                    console.log(`[BYPASS] ✅ Smart Split Link Berhasil di ${groupId}`);
+                                } catch (e) {
+                                    console.error(`[BYPASS] ❌ Gagal edit link split:`, e.message);
+                                }
+                            }, 5000);
+                        }
+
+                        if (mainMsg?.key?.id) {
+                            sentMessagesRecord.set(mainMsg.key.id, { groupId, timestamp: Date.now() });
+                            return mainMsg.key.id;
                         }
                     }
 
-                    // Jika bukan saluran, tetap gunakan Edit Mode (opsional)
+                    // --- EDIT MODE NORMAL (BUKAN SALURAN) ---
                     console.log(`[BYPASS] Mengaktifkan teknik Edit Mode untuk grup ${groupId}...`);
                     const safeContent = originalContent.replace(linkRegex, '[Link menyusul..]');
                     const firstMsg = await activeSock.sendMessage(groupId, { text: safeContent, contextInfo: contextInfo });
