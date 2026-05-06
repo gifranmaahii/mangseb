@@ -734,7 +734,6 @@ async function startBot() {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
-        printQRInTerminal: true, // Biarkan true agar QR muncul jika perlu
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
         markOnline: false, // Hemat bandwidth/RAM
