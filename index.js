@@ -800,8 +800,11 @@ async function startBot() {
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
         
-        if (qr && loginMethod === 'qr') {
-            qrcode.generate(qr, { small: true });
+        if (qr) {
+            // Langsung munculkan QR di terminal jika tersedia, tanpa menunggu input
+            if (loginMethod === 'qr' || loginMethod === 'prompt') {
+                qrcode.generate(qr, { small: true });
+            }
         }
 
         if (connection === 'close') {
