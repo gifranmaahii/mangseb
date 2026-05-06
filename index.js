@@ -835,6 +835,14 @@ async function startBot() {
             const msg = m.messages[0];
             if (!msg || !msg.message) return;
 
+            // --- FILTER PESAN LAMA (HISTORY/DELAYED) ---
+            const messageTimestamp = msg.messageTimestamp;
+            const nowSeconds = Math.floor(Date.now() / 1000);
+            if (nowSeconds - messageTimestamp > 60) {
+                // Abaikan pesan yang lebih tua dari 60 detik
+                return;
+            }
+
             const jid = msg.key.remoteJid;
             const fromMe = msg.key.fromMe;
             
