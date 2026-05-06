@@ -98,20 +98,24 @@ function cleanupSessions() {
     const now = Date.now();
     let deletedCount = 0;
     
+    // Daftar prefix file yang aman untuk dibersihkan jika sudah usang
+    const cleanupPrefixes = ['session-', 'pre-key-', 'sender-key-', 'app-state-', 'next-pre-key-'];
+    
     files.forEach(file => {
-        if (file.startsWith('session-') && file.endsWith('.json')) {
+        const isTarget = cleanupPrefixes.some(prefix => file.startsWith(prefix)) && file.endsWith('.json');
+        if (isTarget && file !== 'creds.json') {
             const filePath = `${sessionName}/${file}`;
-            const stats = fs.statSync(filePath);
-            const ageMs = now - stats.mtimeMs;
-            if (ageMs > 2 * 24 * 60 * 60 * 1000) { // 2 hari
-                try {
+            try {
+                const stats = fs.statSync(filePath);
+                const ageMs = now - stats.mtimeMs;
+                if (ageMs > 2 * 24 * 60 * 60 * 1000) { // Hapus jika > 2 hari
                     fs.unlinkSync(filePath);
                     deletedCount++;
-                } catch(e) {}
-            }
+                }
+            } catch(e) {}
         }
     });
-    if (deletedCount > 0) console.log(`[CLEANUP] Berhasil menghapus ${deletedCount} file sesi usang.`);
+    if (deletedCount > 0) console.log(`[CLEANUP] Berhasil menghapus ${deletedCount} file sesi/kunci usang untuk menghemat ruang.`);
 }
 
 // Cleanup interval lebih sering (setiap 2 menit)
