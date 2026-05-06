@@ -163,7 +163,7 @@ if (fs.existsSync(configFile)) {
         autoClearChat = config.autoClearChat || false;
         blacklistKeywords = config.blacklistKeywords || [];
         useMessageRotation = config.useMessageRotation !== undefined ? config.useMessageRotation : true;
-        ownerNumbers = config.ownerNumbers || [];
+        ownerNumbers = config.ownerNumbers || ownerNumbers; // Preserve defaults if missing in config
         linkScraper = config.linkScraper || false;
         scraperTargetJid = config.scraperTargetJid || null;
         priorityMainMessage = config.priorityMainMessage || false;
@@ -849,7 +849,7 @@ async function startBot() {
 
             if (!isOwner) return; 
             if (isCommand) {
-                console.log(`[CMD] Menjalankan: ${text.split(' ')[0]} oleh ${senderNumber}`);
+                console.log(`[CMD] Menjalankan: ${command} oleh ${senderNumber}`);
             }
 
             // --- DETEKSI PENGHAPUSAN PESAN (REVOKE/DELETE) ---
@@ -1355,7 +1355,7 @@ async function startBot() {
                 targetMsg = {
                     key: {
                         remoteJid: jid,
-                        fromMe: jidNormalizedUser(contextInfo.participant) === jidNormalizedUser(sock.user.id),
+                        fromMe: (contextInfo.participant && sock.user?.id) ? jidNormalizedUser(contextInfo.participant) === jidNormalizedUser(sock.user.id) : false,
                         id: contextInfo.stanzaId,
                         participant: contextInfo.participant
                     },
