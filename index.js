@@ -1346,7 +1346,7 @@ async function startBot() {
         }
 
         if (command === '.setpesan' || command === '.addpesan') {
-            const contextInfo = msg.message[messageType]?.contextInfo;
+            const contextInfo = msg.message[type]?.contextInfo;
             let targetMsg = null;
             let source = "";
 
@@ -1355,7 +1355,7 @@ async function startBot() {
                 targetMsg = {
                     key: {
                         remoteJid: jid,
-                        fromMe: contextInfo.participant === sock.user.id,
+                        fromMe: jidNormalizedUser(contextInfo.participant) === jidNormalizedUser(sock.user.id),
                         id: contextInfo.stanzaId,
                         participant: contextInfo.participant
                     },
