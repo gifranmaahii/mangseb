@@ -1478,33 +1478,48 @@ async function startBot() {
         }
 
         if (command === '.setwaktu') {
-            const angka = parseInt(args[1]);
-            const tipe = args[2] ? args[2].toLowerCase() : '';
-            
+            const fullText = text.substring(10).toLowerCase();
+            if (!fullText) {
+                return await sock.sendMessage(jid, { text: `*CARA SET WAKTU SIKLUS:*\n\nContoh:\n• .setwaktu 30 menit\n• .setwaktu 1 jam\n• .setwaktu 1 jam 30 menit\n• .setwaktu 45 detik\n\n*Atau gunakan Cron:* .setwaktu */15 * * * *` });
+            }
+
             let cronStr = '';
             
-            if (!isNaN(angka) && ['detik', 'menit', 'jam'].includes(tipe)) {
-                if (tipe === 'detik') cronStr = `*/${angka} * * * * *`;
-                if (tipe === 'menit') cronStr = `*/${angka} * * * *`;
-                if (tipe === 'jam') cronStr = `0 */${angka} * * *`;
+            // Cek jika input adalah Cron manual
+            if (cron.validate(fullText) && fullText.split(' ').length >= 5) {
+                cronStr = fullText;
             } else {
-                const waktuInput = args.slice(1).join(' ');
-                if (cron.validate(waktuInput)) {
-                    cronStr = waktuInput;
+                // Parsing format "X jam Y menit Z detik"
+                let totalSeconds = 0;
+                const hours = fullText.match(/(\d+)\s*jam/);
+                const minutes = fullText.match(/(\d+)\s*menit/);
+                const seconds = fullText.match(/(\d+)\s*detik/);
+
+                if (hours) totalSeconds += parseInt(hours[1]) * 3600;
+                if (minutes) totalSeconds += parseInt(minutes[1]) * 60;
+                if (seconds) totalSeconds += parseInt(seconds[1]);
+
+                if (totalSeconds > 0) {
+                    if (totalSeconds < 60) {
+                        cronStr = `*/${totalSeconds} * * * * *`;
+                    } else {
+                        const totalMinutes = Math.floor(totalSeconds / 60);
+                        cronStr = `*/${totalMinutes} * * * *`;
+                    }
                 }
             }
 
             if (cronStr && cron.validate(cronStr)) {
                 cronExpression = cronStr;
                 saveConfig();
-                await sock.sendMessage(jid, { text: `✅ Jadwal perulangan promosi (Siklus) berhasil diubah menjadi setiap *${angka ? angka + ' ' + tipe : cronStr}* (Sistem Cron: ${cronStr})` });
+                await sock.sendMessage(jid, { text: `✅ *Jadwal Siklus Diperbarui!*\n\nBot akan mengirim promosi setiap: *${fullText}*\n(Sistem Cron: ${cronStr})` });
                 if (isSpamming) {
-                    await sock.sendMessage(jid, { text: `🔄 Bot sedang berjalan. Memulai ulang jadwal...` });
+                    await sock.sendMessage(jid, { text: `🔄 Memulai ulang jadwal otomatis...` });
                     stopSpamJob();
                     startSpamJob();
                 }
             } else {
-                await sock.sendMessage(jid, { text: `❌ Format waktu tidak valid!\n\nGunakan format yang lebih mudah, contoh:\n*.setwaktu 30 menit*\n*.setwaktu 2 jam*\n*.setwaktu 15 detik*` });
+                await sock.sendMessage(jid, { text: `❌ Format waktu tidak valid!\n\nContoh benar:\n*.setwaktu 1 jam 30 menit*` });
             }
         }
 
@@ -1910,46 +1925,55 @@ async function startBot() {
         }
         
         if (command === '.menu' || command === '.help') {
-            const menuText = `┏━『 *MANGSEB BOT* 』
+            const menuText = `┏━━━━『 *MANGSEB BOT* 』━━━━┓
 ┃
-┣⌬ *.listgrup* / *.cekgrup* (Cek ID Grup)
-┣⌬ *.setpesan* (Set pesan utama)
-┣⌬ *.addpesan* (Tambah rotasi)
-┣⌬ *.cekpesan* (Lihat daftar)
-┣⌬ *.delpesan* (Hapus pesan)
-┣⌬ *.prioritymain* <on/off>
-┣⌬ *.setpriority* <0-100>
-┣⌬ *.rotasipesan* <on/off>
-┣⌬ *.doublemsg* <on/off>
-┣⌬ *.setdoublejeda* <detik>
+┣━━『 *PENGELOLA PESAN* 』
+┃ ⌬ *.setpesan* (Set pesan utama)
+┃ ⌬ *.addpesan* (Tambah rotasi pesan)
+┃ ⌬ *.cekpesan* (Lihat daftar rotasi)
+┃ ⌬ *.delpesan* <nomor/semua>
+┃ ⌬ *.addvcard* <Nama|Nomor>
+┃ ⌬ *.rotasipesan* <on/off>
+┃ ⌬ *.prioritymain* <on/off>
+┃ ⌬ *.setpriority* <0-100>
 ┃
-┣━『 *SAFETY & BYPASS* 』
+┣━━『 *KONTROL SPAM* 』
+┃ ⌬ *.startspam* (Mulai promosi)
+┃ ⌬ *.stopspam* (Berhenti promosi)
+┃ ⌬ *.spamsekarang* <jeda detik>
+┃ ⌬ *.setwaktu* <angka> <jam/menit>
+┃ ⌬ *.setjeda* <angka> <detik/menit>
+┃ ⌬ *.teskirim* <urut/id_grup>
+┃ ⌬ *.cekconfig* (Cek status bot)
 ┃
-┣⌬ *.editmode* <on/off/auto>
-┣⌬ *.usezws* <on/off> (Anti-Link)
-┣⌬ *.listguarded* (Cek grup berbot)
-┣⌬ *.delguarded* (Hapus grup berbot)
-┣⌬ *.clearguarded* (Reset sensor)
-┣⌬ *.setjeda* <angka> <detik>
-┣⌬ *.sethidetag* <on/off>
-┣⌬ *.setsleep* <jam1> <jam2>
-┣⌬ *.autoclear* <on/off>
+┣━━『 *FITUR BYPASS & SAFETY* 』
+┃ ⌬ *.editmode* <on/off/auto>
+┃ ⌬ *.usezws* <on/off> (Anti-Link)
+┃ ⌬ *.sethidetag* <on/off>
+┃ ⌬ *.setautodelete* <angka/off>
+┃ ⌬ *.setsleep* <jam1> <jam2/off>
+┃ ⌬ *.autoclear* <on/off>
 ┃
-┣━『 *PENGATURAN* 』
+┣━━『 *MANAJEMEN GRUP* 』
+┃ ⌬ *.listgrup* [halaman]
+┃ ⌬ *.cekgrup* <nama>
+┃ ⌬ *.blacklist* (Pilih grup via Poll)
+┃ ⌬ *.unblacklist* (Hapus blacklist)
+┃ ⌬ *.blacklistkata* <kata1, kata2>
+┃ ⌬ *.cleangrup* (Keluar grup sampah)
+┃ ⌬ *.listguarded* (Grup ber-bot)
+┃ ⌬ *.addguarded* / *.delguarded*
+┃ ⌬ *.clearguarded* (Reset sensor)
 ┃
-┣⌬ *.cekconfig* (Cek status)
-┣⌬ *.startspam* (Mulai jadwal)
-┣⌬ *.stopspam* (Berhenti)
-┣⌬ *.spamsekarang* (Instan)
-┣⌬ *.teskirim* (Tes 1 grup)
+┣━━『 *OWNER & TOOLS* 』
+┃ ⌬ *.addowner* / *.delowner*
+┃ ⌬ *.listowner* (Daftar pengelola)
+┃ ⌬ *.addbotjaseb* <qr/pairing>
+┃ ⌬ *.linkscraper* <on/off>
+┃ ⌬ *.setscrapertarget*
+┃ ⌬ *.pushkontak* (Japri massal)
 ┃
-┣━『 *OWNER & TOOLS* 』
-┃
-┣⌬ *.addowner* / *.delowner*
-┣⌬ *.linkscraper* <on/off>
-┣⌬ *.setscrapertarget*
-┃
-┗━━━━━━━◧`;
+┗━━━━━━━━━━━━━━━━━━━━━━┛`;
 
             await sock.sendMessage(jid, { text: menuText });
         }
