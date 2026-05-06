@@ -226,7 +226,7 @@ async function handleJadibot(senderJid, type, number = '') {
         printQRInTerminal: false,
         auth: {
             creds: state.creds,
-            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
+            keys: state.keys,
         },
         browser: ['Mangseb Bot Pro', 'Chrome', '1.0.0'],
         generateHighQualityLinkPreview: true,
@@ -738,7 +738,7 @@ async function startBot() {
         logger,
         auth: {
             creds: state.creds,
-            keys: makeCacheableSignalKeyStore(state.keys, logger),
+            keys: state.keys,
         },
         printQRInTerminal: true,
         browser: ['Mangseb Bot Pro', 'Windows', '3.0.0'],
@@ -860,7 +860,10 @@ async function startBot() {
             const args = text ? text.split(' ') : [];
             const command = args.length > 0 ? args[0].toLowerCase() : "";
 
-            if (!isOwner) return; 
+            if (!isOwner) {
+                if (isCommand) console.log(`[AUTH] Perintah ${command} diabaikan: ${senderNumber} bukan Owner.`);
+                return; 
+            }
             if (isCommand) {
                 console.log(`[CMD] Menjalankan: ${command} oleh ${senderNumber}`);
             }
