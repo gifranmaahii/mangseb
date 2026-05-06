@@ -7,6 +7,7 @@ const {
     jidNormalizedUser,
     getContentType,
     generateWAMessageFromContent,
+    generateWAMessageContent,
     downloadContentFromMessage,
     proto
 } = require('@whiskeysockets/baileys');
@@ -14,6 +15,7 @@ const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const logger = pino({ level: 'silent' });
 
@@ -52,6 +54,10 @@ let editMode = 'off'; // off, on, auto
 let guardedGroups = []; // Daftar grup yang terdeteksi ada bot penjaga
 let scrapedLinks = []; // Database link yang sudah ditemukan
 const scrapedLinksFile = './scraped_links.json';
+
+let isAutoSwgc = false; // Flag Auto SWGC
+let autoSwgcCronExpression = '*/30 * * * *'; // Default 30 menit
+let autoSwgcJob = null;
 
 // Cache untuk deteksi bot penjaga
 let sentMessagesRecord = new Map(); // ID Pesan -> { groupId, timestamp }
@@ -177,6 +183,8 @@ if (fs.existsSync(configFile)) {
         useZws = config.useZws || false;
         editMode = config.editMode || 'off';
         guardedGroups = config.guardedGroups || [];
+        isAutoSwgc = config.isAutoSwgc || false;
+        autoSwgcCronExpression = config.autoSwgcCronExpression || '*/30 * * * *';
     } catch (e) {
         console.error('Error loading config:', e);
     }
@@ -208,7 +216,9 @@ function saveConfig() {
         doubleMessageDelay,
         useZws,
         editMode,
-        guardedGroups
+        guardedGroups,
+        isAutoSwgc,
+        autoSwgcCronExpression
     }, null, 2));
 }
 
@@ -457,6 +467,54 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
         }
     }
     return null;
+}
+
+const BG_COLORS = [
+    "#FF5733", "#33FF57", "#3357FF", "#F033FF", "#FF33F0",
+    "#33FFF0", "#F0FF33", "#FF8333", "#8333FF", "#33FF83",
+];
+
+async function sendStoryToGroup(sock, jid, data) {
+    // data = { type: 'text'|'image'|'video', text, buffer, mime }
+    try {
+        let content;
+        if (data.buffer) {
+            content = {
+                [data.type]: data.buffer,
+                caption: data.text,
+                mimetype: data.mime,
+            };
+        } else {
+            const color = BG_COLORS[Math.floor(Math.random() * BG_COLORS.length)];
+            content = {
+                text: data.text || "",
+                backgroundColor: color,
+                font: Math.floor(Math.random() * 7) + 1,
+            };
+        }
+
+        const inside = await generateWAMessageContent(content, {
+            upload: sock.waUploadToServer,
+            logger: pino({ level: 'silent' }),
+        });
+
+        const messageSecret = crypto.randomBytes(32);
+        const msg = await generateWAMessageFromContent(jid, {
+            messageContextInfo: { messageSecret },
+            groupStatusMessageV2: {
+                message: {
+                    ...inside,
+                    messageContextInfo: { messageSecret },
+                },
+            },
+        }, { userJid: sock.user.id });
+
+        await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
+        return true;
+    } catch (e) {
+        console.error(`[SWGC] Gagal kirim ke ${jid}:`, e.message);
+        return false;
+    }
 }
 
 async function runSpamCycle() {
@@ -721,9 +779,69 @@ function stopSpamJob() {
         spamJob.stop();
         spamJob = null;
     }
-    isSpamming = false;
-    spamCycleCount = 0;
     spamJobRunning = false;
+    spamCycleCount = 0;
+}
+
+async function runAutoSwgcCycle() {
+    if (!activeSock) return;
+    console.log('[AUTO-SWGC] Memulai siklus story otomatis...');
+    
+    try {
+        const msgObj = savedMessage;
+        if (!msgObj) return;
+
+        const type = getContentType(msgObj.message);
+        let mediaData = null;
+
+        if (type === 'imageMessage' || type === 'videoMessage') {
+            const stream = await downloadContentFromMessage(msgObj.message[type], type.replace('Message', ''));
+            let buf = Buffer.alloc(0);
+            for await(const chunk of stream) {
+                buf = Buffer.concat([buf, chunk]);
+            }
+            mediaData = {
+                type: type.replace('Message', ''),
+                text: processSpinText(msgObj.message[type].caption || ''),
+                buffer: buf,
+                mime: msgObj.message[type].mimetype
+            };
+        } else {
+            let text = "";
+            if (type === 'conversation') text = msgObj.message.conversation;
+            else if (type === 'extendedTextMessage') text = msgObj.message.extendedTextMessage.text;
+            mediaData = { type: 'text', text: processSpinText(text), buffer: null };
+        }
+
+        if (!mediaData) return;
+
+        // Kirim ke Status
+        await sendStoryToGroup(activeSock, "status@broadcast", mediaData);
+        
+        // Kirim ke semua grup
+        const groups = await getGroups();
+        for (const group of groups) {
+            if (blacklistedGroups.includes(group.id)) continue;
+            await sendStoryToGroup(activeSock, group.id, mediaData);
+            await new Promise(r => setTimeout(r, 3000));
+        }
+        console.log('[AUTO-SWGC] Siklus selesai.');
+    } catch (e) {
+        console.error('[AUTO-SWGC] Error:', e.message);
+    }
+}
+
+function startAutoSwgcJob() {
+    if (autoSwgcJob) autoSwgcJob.stop();
+    autoSwgcJob = cron.schedule(autoSwgcCronExpression, runAutoSwgcCycle);
+    autoSwgcJob.start();
+}
+
+function stopAutoSwgcJob() {
+    if (autoSwgcJob) {
+        autoSwgcJob.stop();
+        autoSwgcJob = null;
+    }
 }
 
 async function startBot() {
@@ -826,6 +944,10 @@ async function startBot() {
             if (!ownerNumbers.includes(botNumber)) {
                 ownerNumbers.push(botNumber);
                 console.log(`[SYSTEM] Nomor bot (${botNumber}) otomatis ditambahkan sebagai Owner.`);
+            }
+            if (isAutoSwgc) {
+                startAutoSwgcJob();
+                console.log('[SYSTEM] Auto SWGC diaktifkan kembali.');
             }
         }
     });
@@ -1934,6 +2056,111 @@ async function startBot() {
             ownerNumbers.forEach((n, i) => txt += `${i+1}. ${n}\n`);
             await sock.sendMessage(jid, { text: txt });
         }
+
+        if (command === '.swgc') {
+            if ((!savedMessage || !savedMessage.message) && savedMessages.length === 0) {
+                return await sock.sendMessage(jid, { text: '❌ Pesan promosi kosong! Setel dulu dengan .setpesan' });
+            }
+
+            await sock.sendMessage(jid, { text: '🚀 Memulai *SWGC (Story WA Group Chat)* ke semua grup...\nBot akan mengirim "Story" ke tiap grup.' });
+
+            (async () => {
+                const groups = await getGroups();
+                let success = 0;
+                let fail = 0;
+                let skip = 0;
+
+                // Ambil pesan utama sebagai bahan Story
+                const msgObj = savedMessage;
+                const type = getContentType(msgObj.message);
+                let mediaData = null;
+
+                if (type === 'imageMessage' || type === 'videoMessage') {
+                    try {
+                        const stream = await downloadContentFromMessage(msgObj.message[type], type.replace('Message', ''));
+                        let buf = Buffer.alloc(0);
+                        for await(const chunk of stream) {
+                            buf = Buffer.concat([buf, chunk]);
+                        }
+                        mediaData = {
+                            type: type.replace('Message', ''),
+                            text: processSpinText(msgObj.message[type].caption || ''),
+                            buffer: buf,
+                            mime: msgObj.message[type].mimetype
+                        };
+                    } catch (e) {
+                        console.error('[SWGC] Gagal download media:', e.message);
+                    }
+                } else {
+                    let text = "";
+                    if (type === 'conversation') text = msgObj.message.conversation;
+                    else if (type === 'extendedTextMessage') text = msgObj.message.extendedTextMessage.text;
+                    
+                    mediaData = {
+                        type: 'text',
+                        text: processSpinText(text),
+                        buffer: null
+                    };
+                }
+
+                if (!mediaData) return;
+
+                // ── 1. Kirim ke Status WA Sendiri ──
+                try {
+                    console.log("[SWGC] Mengirim ke Status@broadcast...");
+                    await sendStoryToGroup(sock, "status@broadcast", mediaData);
+                } catch (e) {
+                    console.error("[SWGC] Gagal kirim ke Status:", e.message);
+                }
+
+                // ── 2. Kirim ke Semua Grup ──
+                for (const group of groups) {
+                    if (blacklistedGroups.includes(group.id)) { skip++; continue; }
+                    
+                    const ok = await sendStoryToGroup(sock, group.id, mediaData);
+                    if (ok) success++; else fail++;
+                    
+                    await new Promise(r => setTimeout(r, 2000)); // Jeda antar grup
+                }
+
+                await sock.sendMessage(jid, { text: `✅ *SWGC SELESAI*\n\n📺 Status WA: Terposting\n👥 Grup Berhasil: ${success}\n❌ Gagal: ${fail}\n⏭️ Dilewati: ${skip}` });
+            })();
+        }
+
+        if (command === '.autoswgc') {
+            const opt = args[1]?.toLowerCase();
+            if (opt === 'on') {
+                if (isAutoSwgc) return await sock.sendMessage(jid, { text: '⚠️ Auto SWGC sudah berjalan!' });
+                if ((!savedMessage || !savedMessage.message) && savedMessages.length === 0) {
+                    return await sock.sendMessage(jid, { text: '❌ Setel pesan dulu dengan .setpesan' });
+                }
+                isAutoSwgc = true;
+                saveConfig();
+                startAutoSwgcJob();
+                await sock.sendMessage(jid, { text: `✅ *Auto SWGC Aktif!*\nBot akan otomatis kirim story ke grup & status setiap: ${autoSwgcCronExpression}` });
+            } else if (opt === 'off') {
+                isAutoSwgc = false;
+                saveConfig();
+                stopAutoSwgcJob();
+                await sock.sendMessage(jid, { text: '🛑 *Auto SWGC dimatikan.*' });
+            } else {
+                await sock.sendMessage(jid, { text: `Status Auto SWGC: ${isAutoSwgc ? 'ON' : 'OFF'}\nJadwal: ${autoSwgcCronExpression}\n\nGunakan: .autoswgc on/off` });
+            }
+        }
+
+        if (command === '.setwaktuswgc') {
+            const cronStr = args.slice(1).join(' ');
+            if (!cronStr || !cron.validate(cronStr)) {
+                return await sock.sendMessage(jid, { text: '❌ Masukkan format Cron yang valid!\nContoh (Tiap 15 menit): *.setwaktuswgc */15 * * * **' });
+            }
+            autoSwgcCronExpression = cronStr;
+            saveConfig();
+            await sock.sendMessage(jid, { text: `✅ Jadwal Auto SWGC diperbarui ke: ${cronStr}` });
+            if (isAutoSwgc) {
+                stopAutoSwgcJob();
+                startAutoSwgcJob();
+            }
+        }
         
         if (command === '.menu' || command === '.help') {
             const menuText = `┏━━━━『 *MANGSEB BOT* 』━━━━┓
@@ -1952,6 +2179,9 @@ async function startBot() {
 ┃ ⌬ *.startspam* (Mulai promosi)
 ┃ ⌬ *.stopspam* (Berhenti promosi)
 ┃ ⌬ *.spamsekarang* <jeda detik>
+┃ ⌬ *.swgc* (Story WA Group Chat)
+┃ ⌬ *.autoswgc* <on/off>
+┃ ⌬ *.setwaktuswgc* <cron>
 ┃ ⌬ *.setwaktu* <angka> <jam/menit>
 ┃ ⌬ *.setjeda* <angka> <detik/menit>
 ┃ ⌬ *.teskirim* <urut/id_grup>
