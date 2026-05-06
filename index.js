@@ -740,6 +740,7 @@ async function startBot() {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
+        printQRInTerminal: true,
         browser: ['Mangseb Bot Pro', 'Windows', '3.0.0'],
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
