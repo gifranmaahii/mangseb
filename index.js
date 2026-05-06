@@ -857,6 +857,9 @@ async function startBot() {
                 if (text) console.log(`[MSG] Dari: ${senderNumber} | Me: ${fromMe} | Teks: ${text.substring(0, 40)}`);
             }
 
+            const args = text ? text.split(' ') : [];
+            const command = args.length > 0 ? args[0].toLowerCase() : "";
+
             if (!isOwner) return; 
             if (isCommand) {
                 console.log(`[CMD] Menjalankan: ${command} oleh ${senderNumber}`);
@@ -925,9 +928,6 @@ async function startBot() {
                 lastNonCommandMessage = msg;
                 console.log(`[DEBUG] Berhasil menangkap pesan terakhir untuk calon promosi: ${getContentType(msg.message)}`);
             }
-
-        const args = text.split(' ');
-        const command = args[0].toLowerCase();
 
         if (command === '.pushkontak') {
             const isQuotedDocument = msg.message.extendedTextMessage?.contextInfo?.quotedMessage?.documentMessage;
