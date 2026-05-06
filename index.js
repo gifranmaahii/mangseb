@@ -211,7 +211,8 @@ function saveConfig() {
 const { exec } = require('child_process');
 
 async function handleJadibot(senderJid, type, number = '') {
-    const sessionFolder = `auth_info_${Date.now()}`;
+    const cleanNumber = number ? number.replace(/[^0-9]/g, '') : `guest_${Date.now().toString().slice(-6)}`;
+    const sessionFolder = `auth_info_${cleanNumber}`;
     const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
     const { version } = await fetchLatestBaileysVersion();
     
@@ -223,6 +224,7 @@ async function handleJadibot(senderJid, type, number = '') {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
         },
+        browser: ['Mangseb Bot Pro', 'Chrome', '1.0.0'],
         generateHighQualityLinkPreview: true,
     });
 
@@ -734,13 +736,14 @@ async function startBot() {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
+        browser: ['Mangseb Bot Pro', 'Windows', '3.0.0'],
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
-        markOnline: false, // Hemat bandwidth/RAM
-        shouldSyncHistoryMessage: () => false, // Jangan sync chat lama
+        markOnline: true, 
+        shouldSyncHistoryMessage: () => false, 
         retryRequestDelayMs: 5000,
         connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 0, // Jangan timeout saat query berat
+        defaultQueryTimeoutMs: 0, 
     });
 
     if (!sock.authState.creds.registered) {
