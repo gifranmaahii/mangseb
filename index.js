@@ -200,7 +200,13 @@ if (fs.existsSync(configFile)) {
         interactiveLink = config.interactiveLink || '';
         interactiveTitle = config.interactiveTitle || 'GABUNG GRUP BOT';
         interactiveBody = config.interactiveBody || 'Klik di sini untuk bergabung!';
-        interactiveThumbnail = config.interactiveThumbnail ? Buffer.from(config.interactiveThumbnail, 'base64') : null;
+        
+        // Cek apakah ada file gambar manual
+        if (fs.existsSync('./interactive_thumb.png')) {
+            interactiveThumbnail = fs.readFileSync('./interactive_thumb.png');
+        } else {
+            interactiveThumbnail = config.interactiveThumbnail ? Buffer.from(config.interactiveThumbnail, 'base64') : null;
+        }
     } catch (e) {
         console.error('Error loading config:', e);
     }
