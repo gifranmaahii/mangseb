@@ -374,10 +374,6 @@ function processSpinText(text) {
 async function sendWithRetry(groupId, message, participants = null, maxRetries = 3) {
     if (!activeSock) return null;
 
-    // --- LOGIKA EDIT MODE (BYPASS SENSOR) ---
-    const isGuarded = guardedGroups.includes(groupId);
-    const shouldEdit = editMode === 'on' || (editMode === 'auto' && isGuarded);
-
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
             if (!activeSock.ws?.isOpen) {
@@ -387,83 +383,9 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
 
             let messageId = activeSock.generateMessageTag();
             let finalMessage = JSON.parse(JSON.stringify(message));
-
-            // --- 1. INJEKSI KOTAK LINK INTERAKTIF (DIHAPUS UNTUK STABILITAS) ---
-
             const type = getContentType(finalMessage);
 
-            // Jika harus pakai Edit Mode (Bypass)
-            if (shouldEdit && (type === 'conversation' || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text)) {
-                let originalContent = finalMessage.conversation || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text || "";
-                
-                // Ambil contextInfo yang sudah digabung (Newsletter + Link Box)
-                const contextInfo = finalMessage.contextInfo || (type && finalMessage[type]?.contextInfo) || null;
-                const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[^\s\n]+|https:\/\/whatsapp\.com\/channel\/[^\s\n]+)/g;
-                
-                if (linkRegex.test(originalContent)) {
-                    // --- 1. SMART SPLIT BYPASS UNTUK SHARE SALURAN (MEWAH) ---
-                    // Kita gunakan 2 pesan hanya jika ini benar-benar Forwarded Newsletter (Saluran)
-                    if (contextInfo?.forwardedNewsletterMessageInfo) {
-                        console.log(`[BYPASS] Smart Split: Mengirim Pesan Saluran (Mewah) untuk grup ${groupId}...`);
-                        const safeContent = originalContent.replace(linkRegex, '[Link di bawah 👇]');
-                        
-                        // Kirim Pesan Saluran Utama (Tanpa Link)
-                        const mainMsg = await activeSock.sendMessage(groupId, { 
-                            text: safeContent, 
-                            contextInfo: contextInfo 
-                        });
-
-                        // Kirim Pesan Kedua khusus Link (Gunakan Edit Mode agar lebih aman)
-                        const linkOnly = originalContent.match(linkRegex).join('\n');
-                        const linkMsg = await activeSock.sendMessage(groupId, { 
-                            text: "⏳ Mengambil link...",
-                            contextInfo: contextInfo 
-                        });
-                        if (linkMsg?.key) {
-                            setTimeout(async () => {
-                                try {
-                                    await activeSock.sendMessage(groupId, { 
-                                        edit: linkMsg.key, 
-                                        text: `🔗 *LINK GABUNG:*\n${linkOnly}` 
-                                    });
-                                    console.log(`[BYPASS] ✅ Smart Split Link Berhasil di ${groupId}`);
-                                } catch (e) {
-                                    console.error(`[BYPASS] ❌ Gagal edit link split:`, e.message);
-                                }
-                            }, 5000);
-                        }
-
-                        if (mainMsg?.key?.id) {
-                            sentMessagesRecord.set(mainMsg.key.id, { groupId, timestamp: Date.now() });
-                            return mainMsg.key.id;
-                        }
-                    } 
-                    
-                    // --- 2. EDIT MODE NORMAL ---
-                    else {
-                        console.log(`[BYPASS] Normal Edit: Mengirim pesan teks tunggal untuk grup ${groupId}...`);
-                        const safeContent = originalContent.replace(linkRegex, '').trim() || "Promosi Terbaru:";
-                        
-                        const firstMsg = await activeSock.sendMessage(groupId, { 
-                            text: safeContent, 
-                            contextInfo: contextInfo 
-                        });
-
-                        if (firstMsg?.key) {
-                            const targetKey = firstMsg.key;
-                            setTimeout(async () => {
-                                try {
-                                    if (!activeSock) return;
-                                    await activeSock.sendMessage(groupId, { edit: targetKey, ...finalMessage });
-                                } catch (e) {}
-                            }, 5000);
-                            return targetKey.id;
-                        }
-                    }
-                }
-            }
-
-            // --- PENGIRIMAN NORMAL (TIDAK EDIT) ---
+            // Terapkan Spin Text pada konten pesan
             if (finalMessage.conversation) {
                 finalMessage.conversation = processSpinText(finalMessage.conversation);
             } else if (finalMessage.extendedTextMessage?.text) {
@@ -472,6 +394,7 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                 finalMessage[type].caption = processSpinText(finalMessage[type].caption);
             }
 
+            // Terapkan Hidetag jika aktif
             if (useHidetag && participants && participants.length > 0) {
                 const jids = participants.map(p => p.id);
                 if (finalMessage.conversation) {
@@ -486,8 +409,10 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
 
             let result;
             if (attempt <= 2) {
+                // Gunakan relayMessage agar metadata asli (seperti Newsletter info) tetap terjaga jika ada
                 await activeSock.relayMessage(groupId, finalMessage, { messageId });
             } else {
+                // Fallback ke sendMessage jika relay gagal terus
                 if (finalMessage.conversation) result = await activeSock.sendMessage(groupId, { text: finalMessage.conversation });
                 else if (finalMessage.extendedTextMessage) result = await activeSock.sendMessage(groupId, { text: finalMessage.extendedTextMessage.text });
                 else if (finalMessage[type]) result = await activeSock.sendMessage(groupId, { [type]: finalMessage[type] });
@@ -496,15 +421,6 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
 
             if (messageId) {
                 sentMessagesRecord.set(messageId, { groupId, timestamp: Date.now() });
-            }
-
-            // --- KIRIM KOTAK LINK INTERAKTIF (SETELAH PESAN UTAMA) ---
-            if (useInteractiveLink && interactiveLink) {
-                try {
-                    await sendInteractiveButton(groupId);
-                } catch (e) {
-                    console.error(`[INTERAKTIF] Gagal kirim kotak link ke ${groupId}:`, e.message);
-                }
             }
 
             return messageId;
