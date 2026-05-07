@@ -1921,32 +1921,30 @@ async function startBot() {
         if (command === '.setgambarlink') {
             let imageMessage = null;
 
-            // KASUS 1: Pesan ini adalah Gambar dengan caption .setgambarlink
-            const mType = getContentType(m.message);
-            if (mType === 'imageMessage') {
-                imageMessage = m.message.imageMessage;
-            } else if (mType === 'viewOnceMessage' && m.message.viewOnceMessage?.message?.imageMessage) {
-                imageMessage = m.message.viewOnceMessage.message.imageMessage;
-            } else if (mType === 'viewOnceMessageV2' && m.message.viewOnceMessageV2?.message?.imageMessage) {
-                imageMessage = m.message.viewOnceMessageV2.message.imageMessage;
-            }
-            
-            // KASUS 2: Jika bukan gambar langsung, cek apakah ini REPLY ke sebuah gambar
-            if (!imageMessage) {
-                const msgContent = m.message?.ephemeralMessage?.message || m.message?.viewOnceMessage?.message || m.message?.viewOnceMessageV2?.message || m.message;
-                const realType = msgContent ? getContentType(msgContent) : null;
-                const contextInfo = (realType && msgContent[realType]) ? msgContent[realType].contextInfo : null;
-                const quotedMsg = contextInfo?.quotedMessage;
-
-                if (quotedMsg) {
-                    imageMessage = quotedMsg.imageMessage || 
-                                   quotedMsg.viewOnceMessage?.message?.imageMessage || 
-                                   quotedMsg.viewOnceMessageV2?.message?.imageMessage;
+            // FUNGSI UNTUK MENCARI imageMessage DI DALAM OBJEK APAPUN (REKURSIF)
+            const findImage = (obj) => {
+                if (!obj || typeof obj !== 'object') return null;
+                if (obj.imageMessage) return obj.imageMessage;
+                for (const key in obj) {
+                    const result = findImage(obj[key]);
+                    if (result) return result;
                 }
+                return null;
+            };
+
+            // 1. Cek di pesan utama dulu (Caption)
+            imageMessage = findImage(m.message);
+
+            // 2. Jika tidak ketemu, cek di pesan yang di-reply (Quoted)
+            if (!imageMessage) {
+                const quotedMsg = m.message?.extendedTextMessage?.contextInfo?.quotedMessage || 
+                                 m.message?.imageMessage?.contextInfo?.quotedMessage ||
+                                 m.message?.viewOnceMessage?.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+                imageMessage = findImage(quotedMsg);
             }
 
             if (!imageMessage) {
-                return await sock.sendMessage(jid, { text: '❌ Kirim gambar dengan caption *.setgambarlink* atau Balas (Reply) sebuah gambar!' });
+                return await sock.sendMessage(jid, { text: '❌ Bot tidak menemukan gambar! Kirim gambar dengan caption *.setgambarlink* atau Balas (Reply) sebuah gambar.' });
             }
 
             try {
