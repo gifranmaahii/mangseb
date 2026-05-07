@@ -12,7 +12,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "@itsliaaa/baileys": "^0.3.0-rc.9",
     "node-cron": "^4.2.1",
     "pino": "^10.3.1",
     "qrcode-terminal": "^0.12.0"

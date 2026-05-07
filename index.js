@@ -10,7 +10,7 @@ const {
     generateWAMessageContent,
     downloadContentFromMessage,
     proto
-} = require('@whiskeysockets/baileys');
+} = require('@itsliaaa/baileys');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
@@ -516,61 +516,29 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
     }
     return null;
 }
-
 // Fungsi kirim Kotak Link Interaktif (CTA URL Button) - Tombol klik di bawah pesan
 async function sendInteractiveButton(groupId) {
     if (!activeSock || !interactiveLink) return;
 
-    // Siapkan header (dengan/tanpa gambar)
-    let headerContent = { title: "", hasMediaAttachment: false };
+    const msgContent = {
+        text: interactiveBody || "Klik tombol di bawah untuk bergabung!",
+        footer: "© Mangseb Bot",
+        nativeFlow: [{
+            text: interactiveTitle || "Gabung ke grup",
+            url: interactiveLink
+        }]
+    };
+
+    // Tambahkan gambar jika ada thumbnail
     if (interactiveThumbnail) {
-        try {
-            const imgMsg = await generateWAMessageContent(
-                { image: interactiveThumbnail },
-                { upload: activeSock.waUploadToServer }
-            );
-            headerContent = {
-                title: "",
-                hasMediaAttachment: true,
-                imageMessage: imgMsg.imageMessage
-            };
-        } catch (e) {
-            console.error('[INTERAKTIF] Gagal upload thumbnail:', e.message);
-        }
+        msgContent.image = interactiveThumbnail;
+        msgContent.caption = msgContent.text;
+        msgContent.hasMediaAttachment = true;
+        delete msgContent.text;
     }
 
-    const msg = generateWAMessageFromContent(groupId, {
-        viewOnceMessage: {
-            message: {
-                messageContextInfo: {
-                    deviceListMetadata: {},
-                    deviceListMetadataVersion: 2
-                },
-                interactiveMessage: proto.Message.InteractiveMessage.create({
-                    body: proto.Message.InteractiveMessage.Body.create({
-                        text: interactiveBody || "Klik tombol di bawah untuk bergabung!"
-                    }),
-                    footer: proto.Message.InteractiveMessage.Footer.create({
-                        text: "© Mangseb Bot"
-                    }),
-                    header: proto.Message.InteractiveMessage.Header.create(headerContent),
-                    nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-                        buttons: [{
-                            name: "cta_url",
-                            buttonParamsJson: JSON.stringify({
-                                display_text: interactiveTitle || "Gabung ke grup",
-                                url: interactiveLink,
-                                merchant_url: interactiveLink
-                            })
-                        }]
-                    })
-                })
-            }
-        }
-    }, { userJid: activeSock.user.id });
-
-    await activeSock.relayMessage(groupId, msg.message, { messageId: msg.key.id });
-    return msg.key.id;
+    const result = await activeSock.sendMessage(groupId, msgContent);
+    return result;
 }
 
 const BG_COLORS = [
