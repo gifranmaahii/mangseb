@@ -1919,18 +1919,25 @@ async function startBot() {
         }
 
         if (command === '.setgambarlink') {
-            const quotedMsg = m.message?.extendedTextMessage?.contextInfo?.quotedMessage || 
-                             m.message?.imageMessage?.contextInfo?.quotedMessage ||
-                             m.message?.ephemeralMessage?.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-            
-            const qType = quotedMsg ? getContentType(quotedMsg) : null;
-            
-            if (!quotedMsg || qType !== 'imageMessage') {
-                return await sock.sendMessage(jid, { text: '❌ Balas (Reply) sebuah *GAMBAR* dengan perintah .setgambarlink' });
+            const contextInfo = m.message[type]?.contextInfo || 
+                               m.message?.ephemeralMessage?.message[getContentType(m.message.ephemeralMessage.message)]?.contextInfo ||
+                               m.message?.viewOnceMessage?.message[getContentType(m.message.viewOnceMessage.message)]?.contextInfo ||
+                               m.message?.viewOnceMessageV2?.message[getContentType(m.message.viewOnceMessageV2.message)]?.contextInfo;
+                               
+            const quotedMsg = contextInfo?.quotedMessage;
+            if (!quotedMsg) return await sock.sendMessage(jid, { text: '❌ Balas (Reply) sebuah *GAMBAR* dengan perintah .setgambarlink' });
+
+            // Cari imageMessage di dalam quotedMsg (bisa di root atau di dalam viewOnce)
+            let imageMessage = quotedMsg.imageMessage;
+            if (!imageMessage && quotedMsg.viewOnceMessage?.message?.imageMessage) imageMessage = quotedMsg.viewOnceMessage.message.imageMessage;
+            if (!imageMessage && quotedMsg.viewOnceMessageV2?.message?.imageMessage) imageMessage = quotedMsg.viewOnceMessageV2.message.imageMessage;
+
+            if (!imageMessage) {
+                return await sock.sendMessage(jid, { text: '❌ Pesan yang Anda balas bukan sebuah *GAMBAR*!' });
             }
 
             try {
-                const stream = await downloadContentFromMessage(quotedMsg.imageMessage, 'image');
+                const stream = await downloadContentFromMessage(imageMessage, 'image');
                 let buffer = Buffer.from([]);
                 for await (const chunk of stream) {
                     buffer = Buffer.concat([buffer, chunk]);
@@ -1941,7 +1948,7 @@ async function startBot() {
                 await sock.sendMessage(jid, { text: '✅ *Gambar Kotak Klik Berhasil Diatur!*\nGambar ini akan muncul di setiap kotak promosi Anda.' });
             } catch (e) {
                 console.error('[THUMBNAIL] Gagal set gambar:', e.message);
-                await sock.sendMessage(jid, { text: '❌ Gagal mengunduh gambar. Pastikan gambar masih bisa dibuka.' });
+                await sock.sendMessage(jid, { text: '❌ Gagal mengunduh gambar. Silakan coba kirim ulang gambarnya.' });
             }
         }
 
