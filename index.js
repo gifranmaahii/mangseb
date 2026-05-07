@@ -1943,10 +1943,9 @@ async function startBot() {
 
             // 2. Jika tidak ada, cek di pesan yang di-reply (Quoted)
             if (!imageMessage) {
-                const contextInfo = m.message[type]?.contextInfo || 
-                                   m.message?.extendedTextMessage?.contextInfo ||
-                                   m.message?.imageMessage?.contextInfo ||
-                                   m.message?.ephemeralMessage?.message?.extendedTextMessage?.contextInfo;
+                const msgContent = m.message?.ephemeralMessage?.message || m.message?.viewOnceMessage?.message || m.message?.viewOnceMessageV2?.message || m.message;
+                const msgType = msgContent ? getContentType(msgContent) : null;
+                const contextInfo = (msgType && msgContent[msgType]) ? msgContent[msgType].contextInfo : null;
                 
                 if (contextInfo?.quotedMessage) {
                     imageMessage = findImage(contextInfo.quotedMessage);
