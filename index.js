@@ -65,6 +65,7 @@ let useInteractiveLink = false; // Toggle Kotak Link Interaktif
 let interactiveLink = '';
 let interactiveTitle = 'GABUNG GRUP BOT';
 let interactiveBody = 'Klik di sini untuk bergabung!';
+let interactiveThumbnail = null; // Buffer atau Base64 gambar
 
 // Cache untuk deteksi bot penjaga
 let sentMessagesRecord = new Map(); // ID Pesan -> { groupId, timestamp }
@@ -199,6 +200,7 @@ if (fs.existsSync(configFile)) {
         interactiveLink = config.interactiveLink || '';
         interactiveTitle = config.interactiveTitle || 'GABUNG GRUP BOT';
         interactiveBody = config.interactiveBody || 'Klik di sini untuk bergabung!';
+        interactiveThumbnail = config.interactiveThumbnail ? Buffer.from(config.interactiveThumbnail, 'base64') : null;
     } catch (e) {
         console.error('Error loading config:', e);
     }
@@ -238,7 +240,8 @@ function saveConfig() {
         useInteractiveLink,
         interactiveLink,
         interactiveTitle,
-        interactiveBody
+        interactiveBody,
+        interactiveThumbnail: interactiveThumbnail ? interactiveThumbnail.toString('base64') : null
     }, null, 2));
 }
 
@@ -387,7 +390,7 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                     mediaType: 1,
                     showAdAttribution: true,
                     renderLargerThumbnail: true,
-                    thumbnail: finalMessage.jpegThumbnail || null
+                    thumbnail: interactiveThumbnail || finalMessage.jpegThumbnail || null
                 };
 
                 // Injeksi ke Root
@@ -1913,6 +1916,36 @@ async function startBot() {
             interactiveBody = txt;
             saveConfig();
             await sock.sendMessage(jid, { text: `✅ *Deskripsi Kotak Interaktif diatur ke:*\n${txt}` });
+        }
+
+        if (command === '.setgambarlink') {
+            const quotedMsg = m.message.extendedTextMessage?.contextInfo?.quotedMessage;
+            const qType = quotedMsg ? getContentType(quotedMsg) : null;
+            
+            if (!quotedMsg || qType !== 'imageMessage') {
+                return await sock.sendMessage(jid, { text: '❌ Balas (Reply) sebuah *GAMBAR* dengan perintah .setgambarlink' });
+            }
+
+            try {
+                const stream = await downloadContentFromMessage(quotedMsg.imageMessage, 'image');
+                let buffer = Buffer.from([]);
+                for await (const chunk of stream) {
+                    buffer = Buffer.concat([buffer, chunk]);
+                }
+                
+                interactiveThumbnail = buffer;
+                saveConfig();
+                await sock.sendMessage(jid, { text: '✅ *Gambar Kotak Klik Berhasil Diatur!*\nGambar ini akan muncul di setiap kotak promosi Anda.' });
+            } catch (e) {
+                console.error('[THUMBNAIL] Gagal set gambar:', e.message);
+                await sock.sendMessage(jid, { text: '❌ Gagal mengunduh gambar. Pastikan gambar masih bisa dibuka.' });
+            }
+        }
+
+        if (command === '.delgambarlink') {
+            interactiveThumbnail = null;
+            saveConfig();
+            await sock.sendMessage(jid, { text: '🗑️ *Gambar Kotak Klik dihapus.* Kembali ke tampilan standar.' });
         }
 
         if (command === '.linkscraper') {
