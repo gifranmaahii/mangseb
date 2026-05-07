@@ -385,31 +385,7 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
             let messageId = activeSock.generateMessageTag();
             let finalMessage = JSON.parse(JSON.stringify(message));
 
-            // --- 1. INJEKSI KOTAK LINK INTERAKTIF (External Ad Reply) ---
-            if (useInteractiveLink && interactiveLink) {
-                const mType = getContentType(finalMessage);
-                
-                const adReply = {
-                    title: interactiveTitle,
-                    body: interactiveBody,
-                    sourceUrl: interactiveLink || 'https://chat.whatsapp.com',
-                    mediaType: 1,
-                    showAdAttribution: true,
-                    renderLargerThumbnail: false,
-                    thumbnailUrl: 'https://raw.githubusercontent.com/gifranmaahii/mangseb/master/interactive_thumb.png',
-                    thumbnail: null
-                };
-
-                // Injeksi ke Root
-                if (!finalMessage.contextInfo) finalMessage.contextInfo = {};
-                finalMessage.contextInfo.externalAdReply = adReply;
-
-                // Injeksi ke Type-Specific (Penting untuk Media/ExtendedText)
-                if (mType && finalMessage[mType]) {
-                    if (!finalMessage[mType].contextInfo) finalMessage[mType].contextInfo = {};
-                    finalMessage[mType].contextInfo.externalAdReply = adReply;
-                }
-            }
+            // --- 1. INJEKSI KOTAK LINK INTERAKTIF (DIHAPUS UNTUK STABILITAS) ---
 
             const type = getContentType(finalMessage);
 
