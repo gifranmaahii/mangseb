@@ -1920,40 +1920,39 @@ async function startBot() {
 
         if (command === '.setgambarlink') {
             let imageMessage = null;
+            let detectedType = getContentType(m.message);
 
-            // FUNGSI DETEKSI GAMBAR YANG LEBIH KUAT
-            const findImage = (obj) => {
-                if (!obj || typeof obj !== 'object') return null;
-                
-                // Jika objek ini memiliki mimetype image, berarti ini gambarnya
-                if (obj.mimetype && obj.mimetype.startsWith('image/')) return obj;
-                if (obj.imageMessage) return obj.imageMessage;
-                
-                // Cari ke dalam setiap properti (termasuk viewOnceMessage, dll)
-                for (const key in obj) {
-                    if (key === 'contextInfo') continue; // Hindari looping ke pesan yang di-reply di sini
-                    const result = findImage(obj[key]);
-                    if (result) return result;
-                }
-                return null;
-            };
+            // 1. CEK LANGSUNG (Caption)
+            if (m.message?.imageMessage) {
+                imageMessage = m.message.imageMessage;
+            } else if (m.message?.viewOnceMessage?.message?.imageMessage) {
+                imageMessage = m.message.viewOnceMessage.message.imageMessage;
+            } else if (m.message?.viewOnceMessageV2?.message?.imageMessage) {
+                imageMessage = m.message.viewOnceMessageV2.message.imageMessage;
+            } else if (m.message?.ephemeralMessage?.message?.imageMessage) {
+                imageMessage = m.message.ephemeralMessage.message.imageMessage;
+            }
 
-            // 1. Cek di pesan yang dikirim sekarang
-            imageMessage = findImage(m.message);
-
-            // 2. Jika tidak ada, cek di pesan yang di-reply (Quoted)
+            // 2. CEK REPLY (Quoted)
             if (!imageMessage) {
                 const msgContent = m.message?.ephemeralMessage?.message || m.message?.viewOnceMessage?.message || m.message?.viewOnceMessageV2?.message || m.message;
-                const msgType = msgContent ? getContentType(msgContent) : null;
-                const contextInfo = (msgType && msgContent[msgType]) ? msgContent[msgType].contextInfo : null;
-                
-                if (contextInfo?.quotedMessage) {
-                    imageMessage = findImage(contextInfo.quotedMessage);
+                const realType = msgContent ? getContentType(msgContent) : null;
+                const contextInfo = (realType && msgContent[realType]) ? msgContent[realType].contextInfo : null;
+                const quotedMsg = contextInfo?.quotedMessage;
+
+                if (quotedMsg) {
+                    if (quotedMsg.imageMessage) {
+                        imageMessage = quotedMsg.imageMessage;
+                    } else if (quotedMsg.viewOnceMessage?.message?.imageMessage) {
+                        imageMessage = quotedMsg.viewOnceMessage.message.imageMessage;
+                    } else if (quotedMsg.viewOnceMessageV2?.message?.imageMessage) {
+                        imageMessage = quotedMsg.viewOnceMessageV2.message.imageMessage;
+                    }
                 }
             }
 
             if (!imageMessage) {
-                return await sock.sendMessage(jid, { text: '❌ Bot tetap tidak menemukan gambar! Pastikan Anda mengirim GAMBAR (bukan dokumen/sticker).' });
+                return await sock.sendMessage(jid, { text: `❌ Gagal! Bot tidak melihat gambar.\nTipe pesan yang terbaca: *${detectedType}*\n\nHarap kirim GAMBAR biasa (bukan dokumen).` });
             }
 
             try {
