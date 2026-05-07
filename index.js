@@ -520,18 +520,24 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
 async function sendInteractiveButton(groupId) {
     if (!activeSock || !interactiveLink) return;
 
+    const adReply = {
+        title: interactiveTitle || "GABUNG GRUP BOT",
+        body: interactiveBody || "Klik di sini untuk bergabung!",
+        sourceUrl: interactiveLink,
+        mediaUrl: interactiveLink,
+        mediaType: 1,
+        renderLargerThumbnail: true,
+        showAdAttribution: false
+    };
+
+    if (interactiveThumbnail) {
+        adReply.thumbnail = interactiveThumbnail;
+    }
+
     const result = await activeSock.sendMessage(groupId, {
-        text: "",
+        text: "👇 *Gabung Sekarang* 👇",
         contextInfo: {
-            externalAdReply: {
-                title: interactiveTitle || "GABUNG GRUP BOT",
-                body: interactiveBody || "Klik di sini untuk bergabung!",
-                sourceUrl: interactiveLink,
-                mediaType: 1,
-                renderLargerThumbnail: true,
-                showAdAttribution: false,
-                ...(interactiveThumbnail ? { thumbnail: interactiveThumbnail } : {})
-            }
+            externalAdReply: adReply
         }
     });
     return result;
