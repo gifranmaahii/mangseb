@@ -1919,7 +1919,10 @@ async function startBot() {
         }
 
         if (command === '.setgambarlink') {
-            const quotedMsg = m.message.extendedTextMessage?.contextInfo?.quotedMessage;
+            const quotedMsg = m.message?.extendedTextMessage?.contextInfo?.quotedMessage || 
+                             m.message?.imageMessage?.contextInfo?.quotedMessage ||
+                             m.message?.ephemeralMessage?.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            
             const qType = quotedMsg ? getContentType(quotedMsg) : null;
             
             if (!quotedMsg || qType !== 'imageMessage') {
