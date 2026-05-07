@@ -411,16 +411,35 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
 
                     if (firstMsg?.key) {
                         const targetKey = firstMsg.key;
+                        console.log(`[BYPASS] Placeholder terkirim ke ${groupId}. Menunggu 5 detik untuk edit...`);
+                        
                         setTimeout(async () => {
                             try {
                                 if (!activeSock) return;
-                                // Edit menjadi pesan asli yang mengandung link
-                                await activeSock.sendMessage(groupId, { edit: targetKey, ...finalMessage });
-                                console.log(`[BYPASS] ✅ Berhasil edit pesan di ${groupId}`);
+                                
+                                // Siapkan objek edit yang lebih spesifik agar pasti berhasil
+                                let editObj = { edit: targetKey };
+                                const msgType = getContentType(finalMessage);
+                                
+                                if (msgType === 'conversation') {
+                                    editObj.text = finalMessage.conversation;
+                                } else if (msgType === 'extendedTextMessage') {
+                                    editObj.text = finalMessage.extendedTextMessage.text;
+                                    // Bawa contextInfo (seperti info newsletter/mention) jika ada
+                                    if (finalMessage.extendedTextMessage.contextInfo) {
+                                        editObj.contextInfo = finalMessage.extendedTextMessage.contextInfo;
+                                    }
+                                } else {
+                                    // Fallback untuk tipe lain (gambar/video dengan caption)
+                                    Object.assign(editObj, finalMessage);
+                                }
+
+                                await activeSock.sendMessage(groupId, editObj);
+                                console.log(`[BYPASS] ✅ Berhasil edit pesan di grup ${groupId}`);
                             } catch (e) {
-                                console.error(`[BYPASS] ❌ Gagal edit pesan:`, e.message);
+                                console.error(`[BYPASS] ❌ Gagal edit pesan di ${groupId}:`, e.message);
                             }
-                        }, 5000); // Jeda 5 detik sebelum edit
+                        }, 5000); // Jeda 5 detik
                         return targetKey.id;
                     }
                 }
