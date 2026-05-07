@@ -517,65 +517,31 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
     return null;
 }
 
-// Fungsi kirim Kotak Link Interaktif (CTA Button) - Kompatibel semua device
+// Fungsi kirim Kotak Link Interaktif (externalAdReply) - 100% Kompatibel semua device
 async function sendInteractiveButton(groupId) {
     if (!activeSock || !interactiveLink) return;
 
-    const buttons = [
-        {
-            name: "cta_url",
-            buttonParamsJson: JSON.stringify({
-                display_text: interactiveTitle || "Gabung ke grup",
-                url: interactiveLink,
-                merchant_url: interactiveLink
-            })
-        }
-    ];
-
-    const interactiveMsg = {
-        viewOnceMessage: {
-            message: {
-                messageContextInfo: {
-                    deviceListMetadata: {},
-                    deviceListMetadataVersion: 2
-                },
-                interactiveMessage: proto.Message.InteractiveMessage.create({
-                    body: proto.Message.InteractiveMessage.Body.create({
-                        text: interactiveBody || "Klik tombol di bawah untuk bergabung!"
-                    }),
-                    footer: proto.Message.InteractiveMessage.Footer.create({
-                        text: "© Mangseb Bot"
-                    }),
-                    header: proto.Message.InteractiveMessage.Header.create({
-                        ...(interactiveThumbnail ? {
-                            hasMediaAttachment: true,
-                            imageMessage: (await generateWAMessageContent(
-                                { image: interactiveThumbnail },
-                                { upload: activeSock.waUploadToServer }
-                            )).imageMessage
-                        } : {}),
-                        title: "",
-                        subtitle: "",
-                        hasMediaAttachment: !!interactiveThumbnail
-                    }),
-                    nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-                        buttons: buttons
-                    }),
-                    contextInfo: {
-                        mentionedJid: [],
-                        forwardingScore: 999,
-                        isForwarded: true
-                    }
-                })
-            }
-        }
+    const adReply = {
+        title: interactiveTitle || "GABUNG GRUP BOT",
+        body: interactiveBody || "Klik di sini untuk bergabung!",
+        sourceUrl: interactiveLink,
+        mediaType: 1,
+        renderLargerThumbnail: true,
+        showAdAttribution: false
     };
 
-    const msgResult = await activeSock.relayMessage(groupId, interactiveMsg, {
-        messageId: activeSock.generateMessageTag()
+    if (interactiveThumbnail) {
+        adReply.thumbnail = interactiveThumbnail;
+    }
+
+    const result = await activeSock.sendMessage(groupId, {
+        text: "👆 _Klik kotak di atas untuk bergabung_",
+        contextInfo: {
+            externalAdReply: adReply
+        }
     });
 
-    return msgResult;
+    return result;
 }
 
 const BG_COLORS = [
