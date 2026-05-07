@@ -527,7 +527,8 @@ async function sendInteractiveButton(groupId) {
         nativeFlow: [{
             text: interactiveTitle || "Gabung ke grup",
             url: interactiveLink
-        }]
+        }],
+        interactiveAsTemplate: true
     };
 
     if (interactiveThumbnail) {
