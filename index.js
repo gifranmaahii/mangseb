@@ -516,28 +516,16 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
     }
     return null;
 }
-// Fungsi kirim Kotak Link Interaktif - kompatibel semua device
+// Fungsi kirim Kotak Link Interaktif - WA auto-generate preview card
 async function sendInteractiveButton(groupId) {
     if (!activeSock || !interactiveLink) return;
 
-    const msgContent = {
-        text: interactiveBody || "Klik tombol di bawah untuk bergabung!",
-        footer: "© Mangseb Bot",
-        templateButtons: [{
-            text: interactiveTitle || "Gabung ke grup",
-            url: interactiveLink
-        }]
-    };
+    const bodyText = interactiveBody || "Klik link di bawah untuk bergabung!";
+    const titleText = interactiveTitle || "GABUNG GRUP";
 
-    // Tambahkan gambar jika ada thumbnail
-    if (interactiveThumbnail) {
-        msgContent.image = interactiveThumbnail;
-        msgContent.caption = msgContent.text;
-        msgContent.hasMediaAttachment = true;
-        delete msgContent.text;
-    }
-
-    const result = await activeSock.sendMessage(groupId, msgContent);
+    const result = await activeSock.sendMessage(groupId, {
+        text: `*${titleText}*\n${bodyText}\n\n${interactiveLink}`
+    });
     return result;
 }
 
