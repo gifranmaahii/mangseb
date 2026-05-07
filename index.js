@@ -1853,6 +1853,7 @@ async function startBot() {
             statusText += `*SWGC (STORY):*\n`;
             statusText += `Auto SWGC: ${isAutoSwgc ? '🟢 ON' : '🔴 OFF'}\n`;
             statusText += `Jadwal SWGC: ${autoSwgcCronExpression}\n`;
+            statusText += `Jeda SWGC: ${swgcDelayMs / 1000} detik\n`;
             statusText += `Mode Pesan Story: ${useDedicatedSwgcMessage ? '✅ KHUSUS (Dedicated)' : '❌ BIASA (Ikut Utama)'}\n`;
             statusText += `Pesan Story: ${savedSwgcMessage ? '✅ Ada' : '❌ Belum di-set'}\n\n`;
 
@@ -2401,6 +2402,7 @@ async function startBot() {
 ┃ ⌬ *.swgc* (Story WA Group Chat)
 ┃ ⌬ *.autoswgc* <on/off>
 ┃ ⌬ *.setwaktuswgc* <cron>
+┃ ⌬ *.setjedaswgc* <angka> <detik/menit>
 ┃ ⌬ *.setwaktu* <angka> <jam/menit>
 ┃ ⌬ *.setjeda* <angka> <detik/menit>
 ┃ ⌬ *.teskirim* <urut/id_grup>
