@@ -516,28 +516,24 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
     }
     return null;
 }
-// Fungsi kirim Kotak Link Interaktif (CTA URL Button) - Tombol klik di bawah pesan
+// Fungsi kirim Kotak Link Interaktif - 100% kompatibel semua device
 async function sendInteractiveButton(groupId) {
     if (!activeSock || !interactiveLink) return;
 
-    const msgContent = {
-        text: interactiveBody || "Klik tombol di bawah untuk bergabung!",
-        footer: "© Mangseb Bot",
-        nativeFlow: [{
-            text: interactiveTitle || "Gabung ke grup",
-            url: interactiveLink
-        }]
-    };
-
-    // Tambahkan gambar jika ada thumbnail
-    if (interactiveThumbnail) {
-        msgContent.image = interactiveThumbnail;
-        msgContent.caption = msgContent.text;
-        msgContent.hasMediaAttachment = true;
-        delete msgContent.text;
-    }
-
-    const result = await activeSock.sendMessage(groupId, msgContent);
+    const result = await activeSock.sendMessage(groupId, {
+        text: "",
+        contextInfo: {
+            externalAdReply: {
+                title: interactiveTitle || "GABUNG GRUP BOT",
+                body: interactiveBody || "Klik di sini untuk bergabung!",
+                sourceUrl: interactiveLink,
+                mediaType: 1,
+                renderLargerThumbnail: true,
+                showAdAttribution: false,
+                ...(interactiveThumbnail ? { thumbnail: interactiveThumbnail } : {})
+            }
+        }
+    });
     return result;
 }
 
