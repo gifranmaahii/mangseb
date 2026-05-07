@@ -1826,6 +1826,11 @@ async function startBot() {
             statusText += `Anti-Link ZWS: ${useZws ? '✅ AKTIF' : '❌ OFF'}\n`;
             statusText += `Grup Terdeteksi Bot: ${guardedGroups.length} grup\n`;
             statusText += `Link Scraper: ${linkScraper ? '✅ ON' : '❌ OFF'}\n\n`;
+            statusText += `*FITUR SWGC (STORY):*\n`;
+            statusText += `Auto SWGC: ${isAutoSwgc ? '🟢 AKTIF' : '🔴 OFF'}\n`;
+            statusText += `Jadwal SWGC: ${autoSwgcCronExpression}\n`;
+            statusText += `Mode Pesan SWGC: ${useDedicatedSwgcMessage ? '✅ KHUSUS (.setpesanswgc)' : '❌ BIASA (.setpesan)'}\n`;
+            statusText += `Isi Pesan SWGC: ${savedSwgcMessage ? '✅ Tersedia' : '❌ Kosong (Pakai cadangan)'}\n\n`;
             statusText += `Ketik .menu untuk melihat daftar perintah.`;
             await sock.sendMessage(jid, { text: statusText });
         }
