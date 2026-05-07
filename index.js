@@ -1919,10 +1919,10 @@ async function startBot() {
         }
 
         if (command === '.setgambarlink') {
-            const contextInfo = m.message[type]?.contextInfo || 
-                               m.message?.ephemeralMessage?.message[getContentType(m.message.ephemeralMessage.message)]?.contextInfo ||
-                               m.message?.viewOnceMessage?.message[getContentType(m.message.viewOnceMessage.message)]?.contextInfo ||
-                               m.message?.viewOnceMessageV2?.message[getContentType(m.message.viewOnceMessageV2.message)]?.contextInfo;
+            // Cara paling aman mengambil contextInfo dari berbagai tipe pesan
+            const msgContent = m.message?.ephemeralMessage?.message || m.message?.viewOnceMessage?.message || m.message?.viewOnceMessageV2?.message || m.message;
+            const msgType = msgContent ? getContentType(msgContent) : null;
+            const contextInfo = (msgType && msgContent[msgType]) ? msgContent[msgType].contextInfo : null;
                                
             const quotedMsg = contextInfo?.quotedMessage;
             if (!quotedMsg) return await sock.sendMessage(jid, { text: '❌ Balas (Reply) sebuah *GAMBAR* dengan perintah .setgambarlink' });
