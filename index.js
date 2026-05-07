@@ -2327,7 +2327,8 @@ async function startBot() {
         }
 
         if (command === '.setpesanswgc') {
-            const quotedMsg = m.message.extendedTextMessage?.contextInfo?.quotedMessage;
+            const contextInfo = msg.message[type]?.contextInfo;
+            const quotedMsg = contextInfo?.quotedMessage;
             if (!quotedMsg) return await sock.sendMessage(jid, { text: '❌ Balas (Reply) pesan yang ingin dijadikan Story Khusus!' });
             
             savedSwgcMessage = { message: JSON.parse(JSON.stringify(quotedMsg)) };
