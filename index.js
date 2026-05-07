@@ -395,7 +395,7 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                     sourceUrl: interactiveLink,
                     mediaType: 1,
                     showAdAttribution: true,
-                    renderLargerThumbnail: true,
+                    renderLargerThumbnail: false,
                     thumbnail: interactiveThumbnail || finalMessage.jpegThumbnail || null
                 };
 
@@ -435,7 +435,10 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
 
                         // Kirim Pesan Kedua khusus Link (Gunakan Edit Mode agar lebih aman)
                         const linkOnly = originalContent.match(linkRegex).join('\n');
-                        const linkMsg = await activeSock.sendMessage(groupId, { text: "⏳ Mengambil link..." });
+                        const linkMsg = await activeSock.sendMessage(groupId, { 
+                            text: "⏳ Mengambil link...",
+                            contextInfo: contextInfo 
+                        });
                         if (linkMsg?.key) {
                             setTimeout(async () => {
                                 try {
