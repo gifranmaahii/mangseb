@@ -376,48 +376,47 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
             let messageId = activeSock.generateMessageTag();
             let finalMessage = JSON.parse(JSON.stringify(message));
 
-            // --- 1. KONSTRUKSI TOMBOL INTERAKTIF (Hydrated Buttons) ---
+            // --- 1. KONSTRUKSI TOMBOL INTERAKTIF (Native Flow Buttons) ---
             if (useInteractiveLink && interactiveLink) {
                 const type = getContentType(finalMessage);
-                const contentText = finalMessage.conversation || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text || "";
+                const contentText = finalMessage.conversation || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text || "GABUNG GRUP BOT";
                 
-                // Buat struktur Buttons
                 const buttons = [
-                    { index: 1, urlButton: { displayText: interactiveTitle, url: interactiveLink } }
+                    {
+                        name: "cta_url",
+                        buttonParamsJson: JSON.stringify({
+                            display_text: interactiveTitle,
+                            url: interactiveLink,
+                            merchant_url: interactiveLink
+                        })
+                    }
                 ];
 
-                if (type === 'conversation' || type === 'extendedTextMessage') {
-                    finalMessage = {
-                        viewOnceMessage: {
-                            message: {
-                                templateMessage: {
-                                    hydratedTemplate: {
-                                        hydratedContentText: contentText,
-                                        hydratedButtons: buttons,
-                                        contextInfo: finalMessage.contextInfo || {}
-                                    }
-                                }
-                            }
-                        }
-                    };
-                } else if (finalMessage[type]) {
-                    const mediaContent = finalMessage[type];
-                    mediaContent.contextInfo = mediaContent.contextInfo || {};
-                    finalMessage = {
-                        viewOnceMessage: {
-                            message: {
-                                templateMessage: {
-                                    hydratedTemplate: {
-                                        [type]: mediaContent,
-                                        hydratedContentText: contentText,
-                                        hydratedButtons: buttons,
-                                        contextInfo: mediaContent.contextInfo
-                                    }
-                                }
-                            }
-                        }
-                    };
+                const interactiveMessage = {
+                    body: { text: contentText },
+                    footer: { text: interactiveBody },
+                    header: {
+                        title: interactiveTitle,
+                        hasMediaAttachment: (type !== 'conversation' && type !== 'extendedTextMessage'),
+                    },
+                    nativeFlowMessage: {
+                        buttons: buttons
+                    },
+                    contextInfo: finalMessage.contextInfo || {}
+                };
+
+                // Jika ada media, tambahkan ke header
+                if (type !== 'conversation' && type !== 'extendedTextMessage') {
+                    interactiveMessage.header[type] = finalMessage[type];
                 }
+
+                finalMessage = {
+                    viewOnceMessage: {
+                        message: {
+                            interactiveMessage: interactiveMessage
+                        }
+                    }
+                };
             }
 
             const type = getContentType(finalMessage);
@@ -426,12 +425,12 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
             if (shouldEdit && (type === 'conversation' || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text || (finalMessage.viewOnceMessage && useInteractiveLink))) {
                 let originalContent = finalMessage.conversation || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text || "";
                 
-                // Jika pakai Template Message, ambil teks dari hydratedContentText
-                if (finalMessage.viewOnceMessage?.message?.templateMessage?.hydratedTemplate) {
-                    originalContent = finalMessage.viewOnceMessage.message.templateMessage.hydratedTemplate.hydratedContentText;
+                // Jika pakai Interactive Message, ambil teks dari body.text
+                if (finalMessage.viewOnceMessage?.message?.interactiveMessage?.body) {
+                    originalContent = finalMessage.viewOnceMessage.message.interactiveMessage.body.text;
                 }
 
-                const contextInfo = finalMessage.contextInfo || finalMessage[type]?.contextInfo || finalMessage.extendedTextMessage?.contextInfo || (finalMessage.viewOnceMessage?.message?.templateMessage?.hydratedTemplate?.contextInfo) || null;
+                const contextInfo = finalMessage.contextInfo || finalMessage[type]?.contextInfo || finalMessage.extendedTextMessage?.contextInfo || (finalMessage.viewOnceMessage?.message?.interactiveMessage?.contextInfo) || null;
                 const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[^\s\n]+|https:\/\/whatsapp\.com\/channel\/[^\s\n]+)/g;
                 
                 if (linkRegex.test(originalContent)) {
@@ -444,8 +443,8 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                         // Kirim Pesan Saluran Utama (Tanpa Link)
                         // Modifikasi finalMessage untuk pesan pertama (Tanpa Link di teks)
                         let firstMsg = JSON.parse(JSON.stringify(finalMessage));
-                        if (firstMsg.viewOnceMessage?.message?.templateMessage?.hydratedTemplate) {
-                            firstMsg.viewOnceMessage.message.templateMessage.hydratedTemplate.hydratedContentText = safeContent;
+                        if (firstMsg.viewOnceMessage?.message?.interactiveMessage?.body) {
+                            firstMsg.viewOnceMessage.message.interactiveMessage.body.text = safeContent;
                         } else if (firstMsg.conversation) {
                             firstMsg.conversation = safeContent;
                         } else if (firstMsg[type]) {
@@ -477,25 +476,29 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                         }
                     } 
                     
-                    // --- 2. EDIT MODE NORMAL (TEKS BIASA / BUKAN SALURAN) ---
-                    // Cukup 1 pesan saja, tidak perlu link di bawah teks (Smart Split)
+                    // --- 2. EDIT MODE NORMAL ---
                     else {
                         console.log(`[BYPASS] Normal Edit: Mengirim pesan teks tunggal untuk grup ${groupId}...`);
-                        // Kirim teks asli tapi buang link-nya dulu agar tidak terdeteksi bot penjaga
                         const safeContent = originalContent.replace(linkRegex, '').trim() || "Promosi Terbaru:";
-                        const firstMsg = await activeSock.sendMessage(groupId, { text: safeContent, contextInfo: contextInfo });
+                        
+                        let placeholderMsg = JSON.parse(JSON.stringify(finalMessage));
+                        if (placeholderMsg.viewOnceMessage?.message?.interactiveMessage?.body) {
+                            placeholderMsg.viewOnceMessage.message.interactiveMessage.body.text = safeContent;
+                        } else if (placeholderMsg.conversation) {
+                            placeholderMsg.conversation = safeContent;
+                        } else if (placeholderMsg[type]) {
+                            placeholderMsg[type].caption = safeContent;
+                        }
+
+                        const firstMsg = await activeSock.sendMessage(groupId, placeholderMsg);
 
                         if (firstMsg?.key) {
                             const targetKey = firstMsg.key;
                             setTimeout(async () => {
                                 try {
                                     if (!activeSock) return;
-                                    // Edit pesan tadi menjadi pesan asli (yang ada link-nya)
-                                    await activeSock.sendMessage(groupId, { edit: targetKey, text: originalContent, contextInfo: contextInfo });
-                                    console.log(`[BYPASS] ✅ EDIT BERHASIL di ${groupId}`);
-                                } catch (e) {
-                                    console.error(`[BYPASS] ❌ EDIT GAGAL:`, e.message);
-                                }
+                                    await activeSock.sendMessage(groupId, { edit: targetKey, ...finalMessage });
+                                } catch (e) {}
                             }, 5000);
                             return targetKey.id;
                         }
