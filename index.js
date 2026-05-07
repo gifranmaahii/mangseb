@@ -23,6 +23,7 @@ const sessionName = process.argv[2] || 'auth_info';
 const configFile = process.argv[2] ? `./config_${process.argv[2]}.json` : './config.json';
 
 let savedMessage = null;
+let savedSwgcMessage = null; // Pesan khusus untuk SWGC
 let savedMessages = []; // Untuk Multi-Pesan (Rotasi)
 let spamJob = null;
 let cronExpression = '0 * * * *'; // Default setiap jam
@@ -185,6 +186,7 @@ if (fs.existsSync(configFile)) {
         guardedGroups = config.guardedGroups || [];
         isAutoSwgc = config.isAutoSwgc || false;
         autoSwgcCronExpression = config.autoSwgcCronExpression || '*/30 * * * *';
+        savedSwgcMessage = config.savedSwgcMessage || null;
     } catch (e) {
         console.error('Error loading config:', e);
     }
@@ -218,7 +220,8 @@ function saveConfig() {
         editMode,
         guardedGroups,
         isAutoSwgc,
-        autoSwgcCronExpression
+        autoSwgcCronExpression,
+        savedSwgcMessage
     }, null, 2));
 }
 
@@ -788,8 +791,12 @@ async function runAutoSwgcCycle() {
     console.log('[AUTO-SWGC] Memulai siklus story otomatis...');
     
     try {
-        const msgObj = savedMessage;
-        if (!msgObj) return;
+        // Prioritas: Pesan Khusus SWGC -> Pesan Utama
+        const msgObj = savedSwgcMessage || savedMessage;
+        if (!msgObj) {
+            console.log('[AUTO-SWGC] Skip: Tidak ada pesan (utama maupun khusus SWGC).');
+            return;
+        }
 
         const type = getContentType(msgObj.message);
         let mediaData = null;
@@ -2070,8 +2077,8 @@ async function startBot() {
                 let fail = 0;
                 let skip = 0;
 
-                // Ambil pesan utama sebagai bahan Story
-                const msgObj = savedMessage;
+                // Prioritas: Pesan Khusus SWGC -> Pesan Utama
+                const msgObj = savedSwgcMessage || savedMessage;
                 const type = getContentType(msgObj.message);
                 let mediaData = null;
 
@@ -2161,12 +2168,36 @@ async function startBot() {
                 startAutoSwgcJob();
             }
         }
+
+        if (command === '.setpesanswgc') {
+            const quotedMsg = m.message.extendedTextMessage?.contextInfo?.quotedMessage;
+            if (!quotedMsg) return await sock.sendMessage(jid, { text: '❌ Balas (Reply) pesan yang ingin dijadikan Story Khusus!' });
+            
+            savedSwgcMessage = { message: JSON.parse(JSON.stringify(quotedMsg)) };
+            saveConfig();
+            await sock.sendMessage(jid, { text: '✅ *Pesan Khusus SWGC Berhasil Disimpan!*\nBot akan menggunakan pesan ini untuk fitur Story/SWGC.' });
+        }
+
+        if (command === '.cekpesanswgc') {
+            if (!savedSwgcMessage) return await sock.sendMessage(jid, { text: '📋 Belum ada pesan khusus SWGC. Bot saat ini menggunakan cadangan dari .setpesan' });
+            await sock.sendMessage(jid, { text: '📋 *PESAN KHUSUS SWGC SAAT INI:*' });
+            await sock.sendMessage(jid, { ...savedSwgcMessage });
+        }
+
+        if (command === '.delpesanswgc') {
+            savedSwgcMessage = null;
+            saveConfig();
+            await sock.sendMessage(jid, { text: '🗑️ *Pesan khusus SWGC dihapus.*\nSekarang fitur SWGC akan kembali menggunakan pesan utama dari .setpesan' });
+        }
         
         if (command === '.menu' || command === '.help') {
             const menuText = `┏━━━━『 *MANGSEB BOT* 』━━━━┓
 ┃
 ┣━━『 *PENGELOLA PESAN* 』
 ┃ ⌬ *.setpesan* (Set pesan utama)
+┃ ⌬ *.setpesanswgc* (Set pesan khusus story)
+┃ ⌬ *.cekpesanswgc* (Lihat pesan story)
+┃ ⌬ *.delpesanswgc* (Hapus pesan story)
 ┃ ⌬ *.addpesan* (Tambah rotasi pesan)
 ┃ ⌬ *.cekpesan* (Lihat daftar rotasi)
 ┃ ⌬ *.delpesan* <nomor/semua>
