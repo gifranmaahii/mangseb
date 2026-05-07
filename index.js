@@ -63,6 +63,8 @@ let isAutoSwgc = false; // Flag Auto SWGC
 let autoSwgcCronExpression = '*/30 * * * *'; // Default 30 menit
 let autoSwgcJob = null;
 let swgcDelayMs = 5000; // Jeda antar grup saat SWGC (default 5 detik)
+let swgcCycleCount = 0; // Counter siklus SWGC
+let swgcJobRunning = false; // Flag apakah sedang proses SWGC
 
 let useInteractiveLink = false; // Toggle Kotak Link Interaktif
 let interactiveLink = '';
@@ -837,8 +839,18 @@ function stopSpamJob() {
 }
 
 async function runAutoSwgcCycle() {
+    if (swgcJobRunning) {
+        console.log('[AUTO-SWGC] Siklus sebelumnya masih berjalan, melewati siklus ini.');
+        return;
+    }
     if (!activeSock) return;
-    console.log('[AUTO-SWGC] Memulai siklus story otomatis...');
+    
+    swgcJobRunning = true;
+    swgcCycleCount++;
+    const cycleNum = swgcCycleCount;
+    const startTime = new Date();
+    
+    console.log(`[AUTO-SWGC] Memulai Siklus #${cycleNum} pada ${startTime.toLocaleString('id-ID')}`);
     
     try {
         // Logika Mode:
@@ -847,6 +859,7 @@ async function runAutoSwgcCycle() {
             msgObj = savedSwgcMessage;
             if (!msgObj) {
                 console.log('[AUTO-SWGC] Skip: Mode Khusus ON tapi pesan SWGC belum di-set.');
+                swgcJobRunning = false;
                 return;
             }
         } else {
@@ -855,7 +868,15 @@ async function runAutoSwgcCycle() {
 
         if (!msgObj) {
             console.log('[AUTO-SWGC] Skip: Tidak ada pesan yang tersedia.');
+            swgcJobRunning = false;
             return;
+        }
+
+        // Kirim notifikasi mulai ke owner
+        if (spamOwnerJid) {
+            activeSock.sendMessage(spamOwnerJid, { 
+                text: `🔄 *AUTO-SWGC SIKLUS #${cycleNum} DIMULAI*\n\n📊 Memindai grup untuk posting story...\n⏰ ${startTime.toLocaleString('id-ID')}` 
+            }).catch(() => {});
         }
 
         const type = getContentType(msgObj.message);
@@ -880,21 +901,58 @@ async function runAutoSwgcCycle() {
             mediaData = { type: 'text', text: processSpinText(text), buffer: null };
         }
 
-        if (!mediaData) return;
+        if (!mediaData) {
+            swgcJobRunning = false;
+            return;
+        }
+
+        let successCount = 0;
+        let failCount = 0;
+        let skipCount = 0;
 
         // Kirim ke Status
-        await sendStoryToGroup(activeSock, "status@broadcast", mediaData);
+        await sendStoryToGroup(activeSock, "status@broadcast", mediaData).catch(e => console.error('[AUTO-SWGC] Gagal kirim ke Status:', e.message));
         
         // Kirim ke semua grup
         const groups = await getGroups();
         for (const group of groups) {
-            if (blacklistedGroups.includes(group.id)) continue;
-            await sendStoryToGroup(activeSock, group.id, mediaData);
+            if (blacklistedGroups.includes(group.id)) {
+                skipCount++;
+                continue;
+            }
+            const ok = await sendStoryToGroup(activeSock, group.id, mediaData);
+            if (ok) successCount++; else failCount++;
             await new Promise(r => setTimeout(r, swgcDelayMs));
         }
-        console.log('[AUTO-SWGC] Siklus selesai.');
+
+        const endTime = new Date();
+        const durasiDetik = Math.round((endTime - startTime) / 1000);
+        const durasiStr = durasiDetik >= 60 ? `${Math.floor(durasiDetik/60)} menit ${durasiDetik%60} detik` : `${durasiDetik} detik`;
+
+        console.log(`[AUTO-SWGC] Siklus #${cycleNum} selesai.`);
+
+        // Kirim laporan ke owner
+        if (spamOwnerJid) {
+            let reportText = `✅ *LAPORAN AUTO-SWGC SIKLUS #${cycleNum} SELESAI*\n\n`;
+            reportText += `📊 *Hasil Story:*\n`;
+            reportText += `├ 📺 Status WA: Terposting\n`;
+            reportText += `├ ✅ Berhasil: ${successCount} grup\n`;
+            reportText += `├ ❌ Gagal: ${failCount} grup\n`;
+            reportText += `└ ⏭️ Dilewati: ${skipCount} grup\n\n`;
+            reportText += `⏱️ Durasi: ${durasiStr}\n`;
+            reportText += `⏰ Selesai: ${endTime.toLocaleString('id-ID')}\n`;
+            reportText += `\n_Jadwal berikutnya: ${autoSwgcCronExpression}_`;
+            
+            activeSock.sendMessage(spamOwnerJid, { text: reportText }).catch(() => {});
+        }
+
     } catch (e) {
         console.error('[AUTO-SWGC] Error:', e.message);
+        if (spamOwnerJid) {
+            activeSock.sendMessage(spamOwnerJid, { text: `❌ *AUTO-SWGC SIKLUS #${cycleNum} ERROR*\n\n${e.message}` }).catch(() => {});
+        }
+    } finally {
+        swgcJobRunning = false;
     }
 }
 
@@ -2391,6 +2449,7 @@ async function startBot() {
                     return await sock.sendMessage(jid, { text: '❌ Setel pesan dulu dengan .setpesan' });
                 }
                 isAutoSwgc = true;
+                spamOwnerJid = jid; // Set target laporan
                 saveConfig();
                 startAutoSwgcJob();
                 await sock.sendMessage(jid, { text: `✅ *Auto SWGC Aktif!*\nBot akan otomatis kirim story ke grup & status setiap: ${autoSwgcCronExpression}` });
