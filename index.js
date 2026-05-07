@@ -516,30 +516,28 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
     }
     return null;
 }
-// Fungsi kirim Kotak Link Interaktif - 100% kompatibel semua device
+// Fungsi kirim Kotak Link Interaktif - kompatibel semua device
 async function sendInteractiveButton(groupId) {
     if (!activeSock || !interactiveLink) return;
 
-    const adReply = {
-        title: interactiveTitle || "GABUNG GRUP BOT",
-        body: interactiveBody || "Klik di sini untuk bergabung!",
-        sourceUrl: interactiveLink,
-        mediaUrl: interactiveLink,
-        mediaType: 1,
-        renderLargerThumbnail: true,
-        showAdAttribution: false
+    const msgContent = {
+        text: interactiveBody || "Klik tombol di bawah untuk bergabung!",
+        footer: "© Mangseb Bot",
+        templateButtons: [{
+            text: interactiveTitle || "Gabung ke grup",
+            url: interactiveLink
+        }]
     };
 
+    // Tambahkan gambar jika ada thumbnail
     if (interactiveThumbnail) {
-        adReply.thumbnail = interactiveThumbnail;
+        msgContent.image = interactiveThumbnail;
+        msgContent.caption = msgContent.text;
+        msgContent.hasMediaAttachment = true;
+        delete msgContent.text;
     }
 
-    const result = await activeSock.sendMessage(groupId, {
-        text: "👇 *Gabung Sekarang* 👇",
-        contextInfo: {
-            externalAdReply: adReply
-        }
-    });
+    const result = await activeSock.sendMessage(groupId, msgContent);
     return result;
 }
 
