@@ -376,19 +376,49 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
             let messageId = activeSock.generateMessageTag();
             let finalMessage = JSON.parse(JSON.stringify(message));
 
-            // INJEKSI KOTAK INTERAKTIF (External Ad Reply)
+            // INJEKSI TOMBOL INTERAKTIF (Hydrated Buttons)
             if (useInteractiveLink && interactiveLink) {
-                if (!finalMessage.contextInfo) finalMessage.contextInfo = {};
-                finalMessage.contextInfo.externalAdReply = {
-                    title: interactiveTitle,
-                    body: interactiveBody,
-                    sourceUrl: interactiveLink,
-                    mediaType: 1,
-                    showAdAttribution: true,
-                    renderLargerThumbnail: true,
-                    // Jika ada thumbnail di pesan asli, gunakan itu, jika tidak biarkan default WA
-                    thumbnail: finalMessage.jpegThumbnail || null 
-                };
+                const type = getContentType(finalMessage);
+                const contentText = finalMessage.conversation || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text || "";
+                
+                // Buat struktur Template Message
+                const buttons = [
+                    { index: 1, urlButton: { displayText: interactiveTitle, url: interactiveLink } }
+                ];
+
+                if (type === 'conversation' || type === 'extendedTextMessage') {
+                    finalMessage = {
+                        viewOnceMessage: {
+                            message: {
+                                templateMessage: {
+                                    hydratedTemplate: {
+                                        hydratedContentText: contentText,
+                                        hydratedButtons: buttons,
+                                        contextInfo: finalMessage.contextInfo || {}
+                                    }
+                                }
+                            }
+                        }
+                    };
+                } else if (finalMessage[type]) {
+                    // Untuk Media (Image/Video)
+                    const mediaContent = finalMessage[type];
+                    mediaContent.contextInfo = mediaContent.contextInfo || {};
+                    finalMessage = {
+                        viewOnceMessage: {
+                            message: {
+                                templateMessage: {
+                                    hydratedTemplate: {
+                                        [type]: mediaContent,
+                                        hydratedContentText: contentText,
+                                        hydratedButtons: buttons,
+                                        contextInfo: mediaContent.contextInfo
+                                    }
+                                }
+                            }
+                        }
+                    };
+                }
             }
 
             const type = getContentType(finalMessage);
