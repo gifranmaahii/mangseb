@@ -2365,13 +2365,17 @@ async function startBot() {
                 return await sock.sendMessage(jid, { text: '❌ Pesan promosi kosong! Setel dulu dengan .setpesan' });
             }
 
-            await sock.sendMessage(jid, { text: '🚀 Memulai *SWGC (Story WA Group Chat)* ke semua grup...\nBot akan mengirim "Story" ke tiap grup.' });
+            swgcCycleCount++;
+            const cycleNum = swgcCycleCount;
+            const startTime = new Date();
+
+            await sock.sendMessage(jid, { text: `🚀 *MANUAL SWGC SIKLUS #${cycleNum} DIMULAI*\n\n📊 Memindai grup untuk posting story...\n⏰ ${startTime.toLocaleString('id-ID')}` });
 
             (async () => {
                 const groups = await getGroups();
-                let success = 0;
-                let fail = 0;
-                let skip = 0;
+                let successCount = 0;
+                let failCount = 0;
+                let skipCount = 0;
 
                 // Logika Mode:
                 let msgObj = null;
@@ -2429,15 +2433,28 @@ async function startBot() {
 
                 // ── 2. Kirim ke Semua Grup ──
                 for (const group of groups) {
-                    if (blacklistedGroups.includes(group.id)) { skip++; continue; }
+                    if (blacklistedGroups.includes(group.id)) { skipCount++; continue; }
                     
                     const ok = await sendStoryToGroup(sock, group.id, mediaData);
-                    if (ok) success++; else fail++;
+                    if (ok) successCount++; else failCount++;
                     
                     await new Promise(r => setTimeout(r, swgcDelayMs)); // Jeda antar grup
                 }
 
-                await sock.sendMessage(jid, { text: `✅ *SWGC SELESAI*\n\n📺 Status WA: Terposting\n👥 Grup Berhasil: ${success}\n❌ Gagal: ${fail}\n⏭️ Dilewati: ${skip}` });
+                const endTime = new Date();
+                const durasiDetik = Math.round((endTime - startTime) / 1000);
+                const durasiStr = durasiDetik >= 60 ? `${Math.floor(durasiDetik/60)} menit ${durasiDetik%60} detik` : `${durasiDetik} detik`;
+
+                let reportText = `✅ *LAPORAN MANUAL SWGC SIKLUS #${cycleNum} SELESAI*\n\n`;
+                reportText += `📊 *Hasil Story:*\n`;
+                reportText += `├ 📺 Status WA: Terposting\n`;
+                reportText += `├ ✅ Berhasil: ${successCount} grup\n`;
+                reportText += `├ ❌ Gagal: ${failCount} grup\n`;
+                reportText += `└ ⏭️ Dilewati: ${skipCount} grup\n\n`;
+                reportText += `⏱️ Durasi: ${durasiStr}\n`;
+                reportText += `⏰ Selesai: ${endTime.toLocaleString('id-ID')}\n`;
+                
+                await sock.sendMessage(jid, { text: reportText });
             })();
         }
 
