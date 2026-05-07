@@ -1919,21 +1919,34 @@ async function startBot() {
         }
 
         if (command === '.setgambarlink') {
-            // Cara paling aman mengambil contextInfo dari berbagai tipe pesan
-            const msgContent = m.message?.ephemeralMessage?.message || m.message?.viewOnceMessage?.message || m.message?.viewOnceMessageV2?.message || m.message;
-            const msgType = msgContent ? getContentType(msgContent) : null;
-            const contextInfo = (msgType && msgContent[msgType]) ? msgContent[msgType].contextInfo : null;
-                               
-            const quotedMsg = contextInfo?.quotedMessage;
-            if (!quotedMsg) return await sock.sendMessage(jid, { text: '❌ Balas (Reply) sebuah *GAMBAR* dengan perintah .setgambarlink' });
+            let imageMessage = null;
 
-            // Cari imageMessage di dalam quotedMsg (bisa di root atau di dalam viewOnce)
-            let imageMessage = quotedMsg.imageMessage;
-            if (!imageMessage && quotedMsg.viewOnceMessage?.message?.imageMessage) imageMessage = quotedMsg.viewOnceMessage.message.imageMessage;
-            if (!imageMessage && quotedMsg.viewOnceMessageV2?.message?.imageMessage) imageMessage = quotedMsg.viewOnceMessageV2.message.imageMessage;
+            // KASUS 1: Pesan ini adalah Gambar dengan caption .setgambarlink
+            const mType = getContentType(m.message);
+            if (mType === 'imageMessage') {
+                imageMessage = m.message.imageMessage;
+            } else if (mType === 'viewOnceMessage' && m.message.viewOnceMessage?.message?.imageMessage) {
+                imageMessage = m.message.viewOnceMessage.message.imageMessage;
+            } else if (mType === 'viewOnceMessageV2' && m.message.viewOnceMessageV2?.message?.imageMessage) {
+                imageMessage = m.message.viewOnceMessageV2.message.imageMessage;
+            }
+            
+            // KASUS 2: Jika bukan gambar langsung, cek apakah ini REPLY ke sebuah gambar
+            if (!imageMessage) {
+                const msgContent = m.message?.ephemeralMessage?.message || m.message?.viewOnceMessage?.message || m.message?.viewOnceMessageV2?.message || m.message;
+                const realType = msgContent ? getContentType(msgContent) : null;
+                const contextInfo = (realType && msgContent[realType]) ? msgContent[realType].contextInfo : null;
+                const quotedMsg = contextInfo?.quotedMessage;
+
+                if (quotedMsg) {
+                    imageMessage = quotedMsg.imageMessage || 
+                                   quotedMsg.viewOnceMessage?.message?.imageMessage || 
+                                   quotedMsg.viewOnceMessageV2?.message?.imageMessage;
+                }
+            }
 
             if (!imageMessage) {
-                return await sock.sendMessage(jid, { text: '❌ Pesan yang Anda balas bukan sebuah *GAMBAR*!' });
+                return await sock.sendMessage(jid, { text: '❌ Kirim gambar dengan caption *.setgambarlink* atau Balas (Reply) sebuah gambar!' });
             }
 
             try {
