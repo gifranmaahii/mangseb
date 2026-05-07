@@ -392,11 +392,12 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                 const adReply = {
                     title: interactiveTitle,
                     body: interactiveBody,
-                    sourceUrl: interactiveLink,
+                    sourceUrl: interactiveLink || 'https://chat.whatsapp.com',
                     mediaType: 1,
                     showAdAttribution: true,
                     renderLargerThumbnail: false,
-                    thumbnail: interactiveThumbnail || finalMessage.jpegThumbnail || null
+                    thumbnailUrl: 'https://raw.githubusercontent.com/gifranmaahii/mangseb/master/interactive_thumb.png',
+                    thumbnail: null
                 };
 
                 // Injeksi ke Root
