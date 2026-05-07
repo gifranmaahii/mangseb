@@ -497,6 +497,16 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
             if (messageId) {
                 sentMessagesRecord.set(messageId, { groupId, timestamp: Date.now() });
             }
+
+            // --- KIRIM KOTAK LINK INTERAKTIF (SETELAH PESAN UTAMA) ---
+            if (useInteractiveLink && interactiveLink) {
+                try {
+                    await sendInteractiveButton(groupId);
+                } catch (e) {
+                    console.error(`[INTERAKTIF] Gagal kirim kotak link ke ${groupId}:`, e.message);
+                }
+            }
+
             return messageId;
 
         } catch (err) {
@@ -505,6 +515,67 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
         }
     }
     return null;
+}
+
+// Fungsi kirim Kotak Link Interaktif (CTA Button) - Kompatibel semua device
+async function sendInteractiveButton(groupId) {
+    if (!activeSock || !interactiveLink) return;
+
+    const buttons = [
+        {
+            name: "cta_url",
+            buttonParamsJson: JSON.stringify({
+                display_text: interactiveTitle || "Gabung ke grup",
+                url: interactiveLink,
+                merchant_url: interactiveLink
+            })
+        }
+    ];
+
+    const interactiveMsg = {
+        viewOnceMessage: {
+            message: {
+                messageContextInfo: {
+                    deviceListMetadata: {},
+                    deviceListMetadataVersion: 2
+                },
+                interactiveMessage: proto.Message.InteractiveMessage.create({
+                    body: proto.Message.InteractiveMessage.Body.create({
+                        text: interactiveBody || "Klik tombol di bawah untuk bergabung!"
+                    }),
+                    footer: proto.Message.InteractiveMessage.Footer.create({
+                        text: "© Mangseb Bot"
+                    }),
+                    header: proto.Message.InteractiveMessage.Header.create({
+                        ...(interactiveThumbnail ? {
+                            hasMediaAttachment: true,
+                            imageMessage: (await generateWAMessageContent(
+                                { image: interactiveThumbnail },
+                                { upload: activeSock.waUploadToServer }
+                            )).imageMessage
+                        } : {}),
+                        title: "",
+                        subtitle: "",
+                        hasMediaAttachment: !!interactiveThumbnail
+                    }),
+                    nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+                        buttons: buttons
+                    }),
+                    contextInfo: {
+                        mentionedJid: [],
+                        forwardingScore: 999,
+                        isForwarded: true
+                    }
+                })
+            }
+        }
+    };
+
+    const msgResult = await activeSock.relayMessage(groupId, interactiveMsg, {
+        messageId: activeSock.generateMessageTag()
+    });
+
+    return msgResult;
 }
 
 const BG_COLORS = [
@@ -1961,6 +2032,16 @@ async function startBot() {
             }
         }
 
+        if (command === '.tesinteraktif') {
+            if (!interactiveLink) return await sock.sendMessage(jid, { text: '❌ Link belum diatur!\nSet dulu: .setlinkgc https://chat.whatsapp.com/xxx' });
+            try {
+                await sendInteractiveButton(jid);
+                await sock.sendMessage(jid, { text: '✅ Kotak interaktif berhasil dikirim di atas! Cek tampilannya.' });
+            } catch (e) {
+                await sock.sendMessage(jid, { text: `❌ Gagal kirim kotak interaktif:\n${e.message}` });
+            }
+        }
+
         if (command === '.delgambarlink') {
             interactiveThumbnail = null;
             saveConfig();
@@ -2432,6 +2513,15 @@ async function startBot() {
 ┃ ⌬ *.delguarded* <id> — Hapus tanda grup ber-bot
 ┃ ⌬ *.clearguarded* — Reset semua sensor bot
 ┃
+┣━━『 *🔘 KOTAK LINK INTERAKTIF* 』
+┃ ⌬ *.interaktif* <on/off> — Aktifkan kotak link
+┃ ⌬ *.setlinkgc* <url> — Set link grup/saluran
+┃ ⌬ *.setjudullink* <teks> — Judul tombol (contoh: Gabung ke grup)
+┃ ⌬ *.setisilink* <teks> — Deskripsi di kotak
+┃ ⌬ *.setgambarlink* — Set gambar kotak (reply foto)
+┃ ⌬ *.delgambarlink* — Hapus gambar kotak
+┃ ⌬ *.tesinteraktif* — Test kirim kotak ke sini
+┃
 ┣━━『 *🔧 OWNER & TOOLS* 』
 ┃ ⌬ *.addowner* <nomor> — Tambah owner bot
 ┃ ⌬ *.delowner* <nomor> — Hapus owner bot
@@ -2440,7 +2530,6 @@ async function startBot() {
 ┃ ⌬ *.linkscraper* <on/off> — Pantau link di grup
 ┃ ⌬ *.setscrapertarget* — Atur tujuan laporan link
 ┃ ⌬ *.pushkontak* — Kirim pesan ke semua kontak
-┃ ⌬ *.interaktif* — Setting kotak link interaktif
 ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━┛`;
 
