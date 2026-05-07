@@ -1921,30 +1921,40 @@ async function startBot() {
         if (command === '.setgambarlink') {
             let imageMessage = null;
 
-            // FUNGSI UNTUK MENCARI imageMessage DI DALAM OBJEK APAPUN (REKURSIF)
+            // FUNGSI DETEKSI GAMBAR YANG LEBIH KUAT
             const findImage = (obj) => {
                 if (!obj || typeof obj !== 'object') return null;
+                
+                // Jika objek ini memiliki mimetype image, berarti ini gambarnya
+                if (obj.mimetype && obj.mimetype.startsWith('image/')) return obj;
                 if (obj.imageMessage) return obj.imageMessage;
+                
+                // Cari ke dalam setiap properti (termasuk viewOnceMessage, dll)
                 for (const key in obj) {
+                    if (key === 'contextInfo') continue; // Hindari looping ke pesan yang di-reply di sini
                     const result = findImage(obj[key]);
                     if (result) return result;
                 }
                 return null;
             };
 
-            // 1. Cek di pesan utama dulu (Caption)
+            // 1. Cek di pesan yang dikirim sekarang
             imageMessage = findImage(m.message);
 
-            // 2. Jika tidak ketemu, cek di pesan yang di-reply (Quoted)
+            // 2. Jika tidak ada, cek di pesan yang di-reply (Quoted)
             if (!imageMessage) {
-                const quotedMsg = m.message?.extendedTextMessage?.contextInfo?.quotedMessage || 
-                                 m.message?.imageMessage?.contextInfo?.quotedMessage ||
-                                 m.message?.viewOnceMessage?.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-                imageMessage = findImage(quotedMsg);
+                const contextInfo = m.message[type]?.contextInfo || 
+                                   m.message?.extendedTextMessage?.contextInfo ||
+                                   m.message?.imageMessage?.contextInfo ||
+                                   m.message?.ephemeralMessage?.message?.extendedTextMessage?.contextInfo;
+                
+                if (contextInfo?.quotedMessage) {
+                    imageMessage = findImage(contextInfo.quotedMessage);
+                }
             }
 
             if (!imageMessage) {
-                return await sock.sendMessage(jid, { text: '❌ Bot tidak menemukan gambar! Kirim gambar dengan caption *.setgambarlink* atau Balas (Reply) sebuah gambar.' });
+                return await sock.sendMessage(jid, { text: '❌ Bot tetap tidak menemukan gambar! Pastikan Anda mengirim GAMBAR (bukan dokumen/sticker).' });
             }
 
             try {
