@@ -60,6 +60,7 @@ const scrapedLinksFile = './scraped_links.json';
 let isAutoSwgc = false; // Flag Auto SWGC
 let autoSwgcCronExpression = '*/30 * * * *'; // Default 30 menit
 let autoSwgcJob = null;
+let swgcDelayMs = 5000; // Jeda antar grup saat SWGC (default 5 detik)
 
 let useInteractiveLink = false; // Toggle Kotak Link Interaktif
 let interactiveLink = '';
@@ -193,6 +194,7 @@ if (fs.existsSync(configFile)) {
         guardedGroups = config.guardedGroups || [];
         isAutoSwgc = config.isAutoSwgc || false;
         autoSwgcCronExpression = config.autoSwgcCronExpression || '*/30 * * * *';
+        swgcDelayMs = config.swgcDelayMs !== undefined ? config.swgcDelayMs : 5000;
         savedSwgcMessage = config.savedSwgcMessage || null;
         useDedicatedSwgcMessage = config.useDedicatedSwgcMessage || false;
 
@@ -241,6 +243,7 @@ function saveConfig() {
         guardedGroups,
         isAutoSwgc,
         autoSwgcCronExpression,
+        swgcDelayMs,
         savedSwgcMessage,
         useDedicatedSwgcMessage,
         useInteractiveLink,
@@ -872,7 +875,7 @@ async function runAutoSwgcCycle() {
         for (const group of groups) {
             if (blacklistedGroups.includes(group.id)) continue;
             await sendStoryToGroup(activeSock, group.id, mediaData);
-            await new Promise(r => setTimeout(r, 3000));
+            await new Promise(r => setTimeout(r, swgcDelayMs));
         }
         console.log('[AUTO-SWGC] Siklus selesai.');
     } catch (e) {
@@ -2284,7 +2287,7 @@ async function startBot() {
                     const ok = await sendStoryToGroup(sock, group.id, mediaData);
                     if (ok) success++; else fail++;
                     
-                    await new Promise(r => setTimeout(r, 2000)); // Jeda antar grup
+                    await new Promise(r => setTimeout(r, swgcDelayMs)); // Jeda antar grup
                 }
 
                 await sock.sendMessage(jid, { text: `✅ *SWGC SELESAI*\n\n📺 Status WA: Terposting\n👥 Grup Berhasil: ${success}\n❌ Gagal: ${fail}\n⏭️ Dilewati: ${skip}` });
@@ -2310,6 +2313,17 @@ async function startBot() {
             } else {
                 await sock.sendMessage(jid, { text: `Status Auto SWGC: ${isAutoSwgc ? 'ON' : 'OFF'}\nJadwal: ${autoSwgcCronExpression}\n\nGunakan: .autoswgc on/off` });
             }
+        }
+
+        if (command === '.setjedaswgc') {
+            const jedaInput = parseInt(args[1]);
+            const tipe = args[2]?.toLowerCase();
+            if (isNaN(jedaInput) || (tipe !== 'detik' && tipe !== 'menit')) {
+                return await sock.sendMessage(jid, { text: '❌ Format salah.\nContoh: .setjedaswgc 5 detik\nContoh: .setjedaswgc 1 menit\n\nJeda saat ini: ' + (swgcDelayMs / 1000) + ' detik' });
+            }
+            swgcDelayMs = tipe === 'menit' ? jedaInput * 60000 : jedaInput * 1000;
+            saveConfig();
+            await sock.sendMessage(jid, { text: `✅ *Jeda SWGC antar grup diatur ke ${jedaInput} ${tipe}*\n(${swgcDelayMs} ms)\n\n_Berlaku untuk .swgc dan .autoswgc_` });
         }
 
         if (command === '.setwaktuswgc') {
