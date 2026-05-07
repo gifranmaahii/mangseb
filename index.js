@@ -2381,59 +2381,66 @@ async function startBot() {
         if (command === '.menu' || command === '.help') {
             const menuText = `┏━━━━『 *MANGSEB BOT* 』━━━━┓
 ┃
-┣━━『 *PENGELOLA PESAN* 』
-┃ ⌬ *.setpesan* (Set pesan utama)
-┃ ⌬ *.setpesanswgc* (Set pesan khusus story)
-┃ ⌬ *.cekpesanswgc* (Lihat pesan story)
-┃ ⌬ *.delpesanswgc* (Hapus pesan story)
-┃ ⌬ *.modeswgc* <on/off> (Toggle pesan khusus)
-┃ ⌬ *.addpesan* (Tambah rotasi pesan)
-┃ ⌬ *.cekpesan* (Lihat daftar rotasi)
-┃ ⌬ *.delpesan* <nomor/semua>
-┃ ⌬ *.addvcard* <Nama|Nomor>
-┃ ⌬ *.rotasipesan* <on/off>
-┃ ⌬ *.prioritymain* <on/off>
-┃ ⌬ *.setpriority* <0-100>
+┣━━『 *📝 PESAN PROMOSI (SPAM)* 』
+┃ ⌬ *.setpesan* — Set pesan utama (reply/forward)
+┃ ⌬ *.addpesan* — Tambah pesan ke rotasi
+┃ ⌬ *.cekpesan* — Lihat daftar pesan rotasi
+┃ ⌬ *.delpesan* <nomor/semua> — Hapus pesan
+┃ ⌬ *.addvcard* <Nama|Nomor> — Tambah kontak
+┃ ⌬ *.rotasipesan* <on/off> — Toggle rotasi
+┃ ⌬ *.prioritymain* <on/off> — Prioritas pesan utama
+┃ ⌬ *.setpriority* <0-100> — % prioritas utama
 ┃
-┣━━『 *KONTROL SPAM* 』
-┃ ⌬ *.startspam* (Mulai promosi)
-┃ ⌬ *.stopspam* (Berhenti promosi)
-┃ ⌬ *.spamsekarang* <jeda detik>
-┃ ⌬ *.swgc* (Story WA Group Chat)
-┃ ⌬ *.autoswgc* <on/off>
-┃ ⌬ *.setwaktuswgc* <cron>
-┃ ⌬ *.setjedaswgc* <angka> <detik/menit>
-┃ ⌬ *.setwaktu* <angka> <jam/menit>
-┃ ⌬ *.setjeda* <angka> <detik/menit>
-┃ ⌬ *.teskirim* <urut/id_grup>
-┃ ⌬ *.cekconfig* (Cek status bot)
+┣━━『 *📺 PESAN STORY/SWGC* 』
+┃ ⌬ *.setpesanswgc* — Set pesan khusus story (reply)
+┃ ⌬ *.cekpesanswgc* — Lihat pesan story tersimpan
+┃ ⌬ *.delpesanswgc* — Hapus pesan story
+┃ ⌬ *.modeswgc* <on/off> — Pakai pesan khusus story
 ┃
-┣━━『 *FITUR BYPASS & SAFETY* 』
-┃ ⌬ *.editmode* <on/off/auto>
-┃ ⌬ *.usezws* <on/off> (Anti-Link)
-┃ ⌬ *.sethidetag* <on/off>
-┃ ⌬ *.setautodelete* <angka/off>
-┃ ⌬ *.setsleep* <jam1> <jam2/off>
-┃ ⌬ *.autoclear* <on/off>
+┣━━『 *🚀 KONTROL SPAM* 』
+┃ ⌬ *.startspam* — Mulai promosi otomatis
+┃ ⌬ *.stopspam* — Hentikan promosi
+┃ ⌬ *.spamsekarang* — Kirim sekali langsung
+┃ ⌬ *.setwaktu* <angka> <jam/menit> — Atur jadwal spam
+┃ ⌬ *.setjeda* <angka> <detik/menit> — Jeda antar grup
+┃ ⌬ *.teskirim* <urut/id_grup> — Test kirim ke 1 grup
+┃ ⌬ *.cekconfig* — Lihat semua status & config
 ┃
-┣━━『 *MANAJEMEN GRUP* 』
-┃ ⌬ *.listgrup* [halaman]
-┃ ⌬ *.cekgrup* <nama>
-┃ ⌬ *.blacklist* (Pilih grup via Poll)
-┃ ⌬ *.unblacklist* (Hapus blacklist)
-┃ ⌬ *.blacklistkata* <kata1, kata2>
-┃ ⌬ *.cleangrup* (Keluar grup sampah)
-┃ ⌬ *.listguarded* (Grup ber-bot)
-┃ ⌬ *.addguarded* / *.delguarded*
-┃ ⌬ *.clearguarded* (Reset sensor)
+┣━━『 *📡 SWGC (STORY WA GROUP)* 』
+┃ ⌬ *.swgc* — Kirim story ke semua grup (sekali)
+┃ ⌬ *.autoswgc* <on/off> — Jadwal story otomatis
+┃ ⌬ *.setwaktuswgc* <cron> — Atur jadwal (cron)
+┃ ⌬ *.setjedaswgc* <angka> <detik/menit> — Jeda antar grup
 ┃
-┣━━『 *OWNER & TOOLS* 』
-┃ ⌬ *.addowner* / *.delowner*
-┃ ⌬ *.listowner* (Daftar pengelola)
-┃ ⌬ *.addbotjaseb* <qr/pairing>
-┃ ⌬ *.linkscraper* <on/off>
-┃ ⌬ *.setscrapertarget*
-┃ ⌬ *.pushkontak* (Japri massal)
+┣━━『 *🛡️ BYPASS & SAFETY* 』
+┃ ⌬ *.editmode* <on/off/auto> — Mode edit pesan
+┃ ⌬ *.usezws* <on/off> — Anti-deteksi link (ZWS)
+┃ ⌬ *.sethidetag* <on/off> — Mention tersembunyi
+┃ ⌬ *.setautodelete* <angka/off> — Auto tarik pesan
+┃ ⌬ *.setsleep* <jam1> <jam2/off> — Jam tidur bot
+┃ ⌬ *.autoclear* <on/off> — Hapus chat setelah kirim
+┃
+┣━━『 *👥 MANAJEMEN GRUP* 』
+┃ ⌬ *.listgrup* [halaman] — Daftar semua grup
+┃ ⌬ *.cekgrup* <nama> — Cari grup by nama
+┃ ⌬ *.blacklist* — Blacklist grup (via Poll)
+┃ ⌬ *.unblacklist* — Hapus grup dari blacklist
+┃ ⌬ *.blacklistkata* <kata1, kata2> — Filter nama grup
+┃ ⌬ *.cleangrup* — Keluar dari grup tidak aktif
+┃ ⌬ *.listguarded* — Lihat grup yang ada bot jaga
+┃ ⌬ *.addguarded* <id> — Tandai grup ber-bot
+┃ ⌬ *.delguarded* <id> — Hapus tanda grup ber-bot
+┃ ⌬ *.clearguarded* — Reset semua sensor bot
+┃
+┣━━『 *🔧 OWNER & TOOLS* 』
+┃ ⌬ *.addowner* <nomor> — Tambah owner bot
+┃ ⌬ *.delowner* <nomor> — Hapus owner bot
+┃ ⌬ *.listowner* — Daftar pengelola bot
+┃ ⌬ *.addbotjaseb* <qr/pairing> — Tambah bot baru
+┃ ⌬ *.linkscraper* <on/off> — Pantau link di grup
+┃ ⌬ *.setscrapertarget* — Atur tujuan laporan link
+┃ ⌬ *.pushkontak* — Kirim pesan ke semua kontak
+┃ ⌬ *.interaktif* — Setting kotak link interaktif
 ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━┛`;
 
