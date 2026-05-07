@@ -55,6 +55,7 @@ let useZws = false; // Gunakan Zero Width Space pada link
 let editMode = 'off'; // off, on, auto
 let bypassPlaceholder = 'Promosi Terbaru:'; // Teks awal sebelum di-edit
 let guardedGroups = []; // Daftar grup yang terdeteksi ada bot penjaga
+let hidetagGroups = []; // Daftar grup yang akan dikirim dengan hidetag
 let scrapedLinks = []; // Database link yang sudah ditemukan
 const scrapedLinksFile = './scraped_links.json';
 
@@ -194,6 +195,7 @@ if (fs.existsSync(configFile)) {
         editMode = config.editMode || 'off';
         bypassPlaceholder = config.bypassPlaceholder || 'Promosi Terbaru:';
         guardedGroups = config.guardedGroups || [];
+        hidetagGroups = config.hidetagGroups || [];
         isAutoSwgc = config.isAutoSwgc || false;
         autoSwgcCronExpression = config.autoSwgcCronExpression || '*/30 * * * *';
         swgcDelayMs = config.swgcDelayMs !== undefined ? config.swgcDelayMs : 5000;
@@ -244,6 +246,7 @@ function saveConfig() {
         editMode,
         bypassPlaceholder,
         guardedGroups,
+        hidetagGroups,
         isAutoSwgc,
         autoSwgcCronExpression,
         swgcDelayMs,
@@ -454,8 +457,9 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                 finalMessage[type].caption = processSpinText(finalMessage[type].caption);
             }
 
-            // Terapkan Hidetag jika aktif
-            if (useHidetag && participants && participants.length > 0) {
+            // Terapkan Hidetag jika aktif (Global atau spesifik grup)
+            const isHidetagGroup = hidetagGroups.includes(groupId);
+            if ((useHidetag || isHidetagGroup) && participants && participants.length > 0) {
                 const jids = participants.map(p => p.id);
                 if (finalMessage.conversation) {
                     finalMessage.extendedTextMessage = { text: finalMessage.conversation, contextInfo: { mentionedJid: jids } };
@@ -1265,7 +1269,9 @@ async function startBot() {
             pagedGroups.forEach((g, i) => {
                 const isBlacklisted = blacklistedGroups.includes(g.id);
                 const isGuarded = guardedGroups.includes(g.id);
+                const isHidetag = hidetagGroups.includes(g.id);
                 let status = isBlacklisted ? '🚫' : (isGuarded ? '🛡️' : '✅');
+                if (isHidetag) status += ' 📢';
                 
                 response += `${startIdx + i + 1}. *${g.subject}*\nID: \`${g.id}\` [${status}]\n\n`;
             });
@@ -1302,7 +1308,9 @@ async function startBot() {
             filtered.slice(0, 10).forEach((g, i) => {
                 const isBlacklisted = blacklistedGroups.includes(g.id);
                 const isGuarded = guardedGroups.includes(g.id);
+                const isHidetag = hidetagGroups.includes(g.id);
                 let status = isBlacklisted ? '🚫' : (isGuarded ? '🛡️' : '✅');
+                if (isHidetag) status += ' 📢';
                 
                 response += `${i + 1}. *${g.subject.substring(0, 30)}*\nID: \`${g.id}\` [${status}]\n\n`;
             });
@@ -1398,6 +1406,56 @@ async function startBot() {
                 await sock.sendMessage(jid, { text: `✅ Berhasil menghapus ${removedCount} grup dari blacklist.` });
             } else {
                 await sock.sendMessage(jid, { text: `⚠️ Gagal menghapus.` });
+            }
+        }
+
+        if (command === '.addhidetag') {
+            const groups = await getGroups();
+            let addedCount = 0;
+            for (let i = 1; i < args.length; i++) {
+                const target = args[i];
+                let groupId = target;
+                if (!isNaN(target) && Number(target) > 0 && Number(target) <= groups.length) {
+                    groupId = groups[Number(target) - 1].id;
+                }
+                if (groupId.endsWith('@g.us') && !hidetagGroups.includes(groupId)) {
+                    hidetagGroups.push(groupId);
+                    addedCount++;
+                }
+            }
+            if (addedCount > 0) {
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ Berhasil mendaftarkan ${addedCount} grup ke list hidetag.` });
+            } else {
+                let p = `📢 *DAFTAR HIDETAG GRUP*\n\n`;
+                p += `Cara penggunaan:\n`;
+                p += `*.addhidetag 1 2 5* (Gunakan nomor urut dari .listgrup)\n`;
+                p += `*.addhidetag id_grup1 id_grup2*\n\n`;
+                p += `_Grup yang didaftarkan akan otomatis dipasang hidetag saat bot mengirim promosi ke sana._`;
+                await sock.sendMessage(jid, { text: p });
+            }
+        }
+
+        if (command === '.delhidetag') {
+            let removedCount = 0;
+            for (let i = 1; i < args.length; i++) {
+                const target = args[i];
+                let targetId = target;
+                const index = hidetagGroups.indexOf(targetId);
+                if (index > -1) {
+                    hidetagGroups.splice(index, 1);
+                    removedCount++;
+                }
+            }
+            if (removedCount > 0) {
+                saveConfig();
+                await sock.sendMessage(jid, { text: `✅ Berhasil menghapus ${removedCount} grup dari list hidetag.` });
+            } else {
+                let p = `🔓 *HAPUS HIDETAG GRUP*\n\n`;
+                p += `Cara penggunaan:\n`;
+                p += `*.delhidetag id_grup1 id_grup2*\n\n`;
+                p += `_Grup yang dihapus tidak akan lagi dipasang hidetag otomatis._`;
+                await sock.sendMessage(jid, { text: p });
             }
         }
 
@@ -1857,6 +1915,7 @@ async function startBot() {
             statusText += `Auto-Tarik Pesan: ${autoDeleteMs > 0 ? `${autoDeleteMs / 1000} detik` : '❌ OFF'}\n`;
             statusText += `Auto-Clear Chat: ${autoClearChat ? '✅ ON' : '❌ OFF'}\n`;
             statusText += `Grup Blacklist: ${blacklistedGroups.length} grup\n`;
+            statusText += `Grup Hidetag: ${hidetagGroups.length} grup\n`;
             statusText += `Filter Kata Grup: ${blacklistKeywords.length > 0 ? blacklistKeywords.join(', ') : '❌ OFF'}\n`;
             statusText += `Rotasi Promosi: ${savedMessages.length > 1 ? `✅ Aktif (${savedMessages.length} pesan)` : '❌ OFF'}\n`;
             statusText += `Pesan Utama: ${savedMessage ? '✅ Ada' : '❌ Belum di-set'}\n\n`;
@@ -2454,6 +2513,8 @@ async function startBot() {
 ┃ ⌬ *.cekgrup* <nama> — Cari grup by nama
 ┃ ⌬ *.blacklist* — Blacklist grup (via Poll)
 ┃ ⌬ *.unblacklist* — Hapus grup dari blacklist
+┃ ⌬ *.addhidetag* — Daftar grup hidetag
+┃ ⌬ *.delhidetag* — Hapus grup hidetag
 ┃ ⌬ *.blacklistkata* <kata1, kata2> — Filter nama grup
 ┃ ⌬ *.cleangrup* — Keluar dari grup tidak aktif
 ┃ ⌬ *.listguarded* — Lihat grup yang ada bot jaga
