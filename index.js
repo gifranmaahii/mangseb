@@ -1841,29 +1841,33 @@ async function startBot() {
         }
 
         if (command === '.cekconfig') {
-            let statusText = `*Konfigurasi Spam Bot*\n\n`;
+            let statusText = `📊 *KONFIGURASI SPAM BOT MANGSEB*\n\n`;
             statusText += `Status Spam: ${isSpamming ? '🟢 BERJALAN' : '🔴 BERHENTI'}\n`;
             statusText += `Jadwal (Cron): ${cronExpression}\n`;
             statusText += `Jeda Antar Grup: ${sendDelayMs / 1000} detik\n`;
-            statusText += `Hidetag (Mention All): ${useHidetag ? '✅ ON' : '❌ OFF'}\n`;
+            statusText += `Hidetag (Mention): ${useHidetag ? '✅ ON' : '❌ OFF'}\n`;
             statusText += `Jam Tidur (Sleep): ${sleepTimeStart !== -1 ? `${sleepTimeStart}:00 - ${sleepTimeEnd}:00` : '❌ OFF (24 Jam)'}\n`;
             statusText += `Auto-Tarik Pesan: ${autoDeleteMs > 0 ? `${autoDeleteMs / 1000} detik` : '❌ OFF'}\n`;
             statusText += `Auto-Clear Chat: ${autoClearChat ? '✅ ON' : '❌ OFF'}\n`;
-            statusText += `Grup Blacklist (Manual): ${blacklistedGroups.length} grup\n`;
+            statusText += `Grup Blacklist: ${blacklistedGroups.length} grup\n`;
             statusText += `Filter Kata Grup: ${blacklistKeywords.length > 0 ? blacklistKeywords.join(', ') : '❌ OFF'}\n`;
-            statusText += `Rotasi Promosi: ${savedMessages.length > 1 ? `✅ Aktif (${savedMessages.length} pesan)` : '❌ OFF (1 pesan)'}\n`;
+            statusText += `Rotasi Promosi: ${savedMessages.length > 1 ? `✅ Aktif (${savedMessages.length} pesan)` : '❌ OFF'}\n`;
             statusText += `Pesan Utama: ${savedMessage ? '✅ Ada' : '❌ Belum di-set'}\n\n`;
-            statusText += `Rotasi Pesan: ${useMessageRotation ? '✅ Acak' : '❌ Berurutan'}\n`;
-            statusText += `Prioritas Pesan Utama: ${priorityMainMessage ? `✅ ON (${mainMessagePriorityPercent}%)` : '❌ OFF'}\n`;
-            statusText += `Mode 2 Pesan (Double): ${doubleMessageMode ? '✅ ON' : '❌ OFF'}\n`;
-            if (doubleMessageMode) statusText += `Jeda Double Pesan: ${doubleMessageDelay / 1000} detik\n`;
-            statusText += `Kotak Link Interaktif: ${useInteractiveLink ? '✅ ON' : '❌ OFF'}\n`;
-            if (useInteractiveLink) statusText += `Link: ${interactiveLink}\n`;
-            statusText += `\n*BYPASS & SENSOR:*\n`;
-            statusText += `Edit Mode: ${editMode === 'auto' ? '🤖 AUTO (Pintar)' : (editMode === 'on' ? '✅ SELALU' : '❌ OFF')}\n`;
+            
+            statusText += `*SWGC (STORY):*\n`;
+            statusText += `Auto SWGC: ${isAutoSwgc ? '🟢 ON' : '🔴 OFF'}\n`;
+            statusText += `Jadwal SWGC: ${autoSwgcCronExpression}\n`;
+            statusText += `Mode Pesan Story: ${useDedicatedSwgcMessage ? '✅ KHUSUS (Dedicated)' : '❌ BIASA (Ikut Utama)'}\n`;
+            statusText += `Pesan Story: ${savedSwgcMessage ? '✅ Ada' : '❌ Belum di-set'}\n\n`;
+
+            statusText += `*INTERAKTIF & BYPASS:*\n`;
+            statusText += `Kotak Link: ${useInteractiveLink ? '✅ ON' : '❌ OFF'}\n`;
+            if (useInteractiveLink) statusText += `Link Box: ${interactiveLink}\n`;
+            statusText += `Edit Mode: ${editMode === 'auto' ? '🤖 AUTO' : (editMode === 'on' ? '✅ SELALU' : '❌ OFF')}\n`;
             statusText += `Anti-Link ZWS: ${useZws ? '✅ AKTIF' : '❌ OFF'}\n`;
-            statusText += `Grup Terdeteksi Bot: ${guardedGroups.length} grup\n`;
+            statusText += `Grup Ber-Bot: ${guardedGroups.length} grup\n`;
             statusText += `Link Scraper: ${linkScraper ? '✅ ON' : '❌ OFF'}\n\n`;
+            
             statusText += `Ketik .menu untuk melihat daftar perintah.`;
             await sock.sendMessage(jid, { text: statusText });
         }
