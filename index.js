@@ -872,10 +872,12 @@ async function runAutoSwgcCycle() {
             return;
         }
 
+        const groups = await getGroups();
+        
         // Kirim notifikasi mulai ke owner
         if (spamOwnerJid) {
             activeSock.sendMessage(spamOwnerJid, { 
-                text: `🔄 *AUTO-SWGC SIKLUS #${cycleNum} DIMULAI*\n\n📊 Memindai grup untuk posting story...\n⏰ ${startTime.toLocaleString('id-ID')}` 
+                text: `🔄 *AUTO-SWGC SIKLUS #${cycleNum} DIMULAI*\n\n📊 Memindai ${groups.length} grup untuk posting story...\n⏰ ${startTime.toLocaleString('id-ID')}` 
             }).catch(() => {});
         }
 
@@ -914,12 +916,22 @@ async function runAutoSwgcCycle() {
         await sendStoryToGroup(activeSock, "status@broadcast", mediaData).catch(e => console.error('[AUTO-SWGC] Gagal kirim ke Status:', e.message));
         
         // Kirim ke semua grup
-        const groups = await getGroups();
         for (const group of groups) {
             if (blacklistedGroups.includes(group.id)) {
                 skipCount++;
                 continue;
             }
+            
+            // Cek Admin Only
+            if (group.announce) {
+                const me = group.participants.find(p => jidNormalizedUser(p.id) === jidNormalizedUser(activeSock.user.id));
+                if (!me?.admin) {
+                    console.log(`[AUTO-SWGC] Skip: ${group.subject} (Admin Only & Bot bukan Admin)`);
+                    skipCount++;
+                    continue;
+                }
+            }
+
             const ok = await sendStoryToGroup(activeSock, group.id, mediaData);
             if (ok) successCount++; else failCount++;
             await new Promise(r => setTimeout(r, swgcDelayMs));
@@ -938,7 +950,8 @@ async function runAutoSwgcCycle() {
             reportText += `├ 📺 Status WA: Terposting\n`;
             reportText += `├ ✅ Berhasil: ${successCount} grup\n`;
             reportText += `├ ❌ Gagal: ${failCount} grup\n`;
-            reportText += `└ ⏭️ Dilewati: ${skipCount} grup\n\n`;
+            reportText += `├ ⏭️ Dilewati: ${skipCount} grup\n`;
+            reportText += `└ 📋 Total Scan: ${groups.length} grup\n\n`;
             reportText += `⏱️ Durasi: ${durasiStr}\n`;
             reportText += `⏰ Selesai: ${endTime.toLocaleString('id-ID')}\n`;
             reportText += `\n_Jadwal berikutnya: ${autoSwgcCronExpression}_`;
@@ -2369,13 +2382,13 @@ async function startBot() {
             const cycleNum = swgcCycleCount;
             const startTime = new Date();
 
-            await sock.sendMessage(jid, { text: `🚀 *MANUAL SWGC SIKLUS #${cycleNum} DIMULAI*\n\n📊 Memindai grup untuk posting story...\n⏰ ${startTime.toLocaleString('id-ID')}` });
-
             (async () => {
                 const groups = await getGroups();
                 let successCount = 0;
                 let failCount = 0;
                 let skipCount = 0;
+
+                await sock.sendMessage(jid, { text: `🚀 *MANUAL SWGC SIKLUS #${cycleNum} DIMULAI*\n\n📊 Memindai ${groups.length} grup untuk posting story...\n⏰ ${startTime.toLocaleString('id-ID')}` });
 
                 // Logika Mode:
                 let msgObj = null;
@@ -2435,6 +2448,16 @@ async function startBot() {
                 for (const group of groups) {
                     if (blacklistedGroups.includes(group.id)) { skipCount++; continue; }
                     
+                    // Cek Admin Only
+                    if (group.announce) {
+                        const me = group.participants.find(p => jidNormalizedUser(p.id) === jidNormalizedUser(activeSock.user.id));
+                        if (!me?.admin) {
+                            console.log(`[SWGC] Skip: ${group.subject} (Admin Only & Bot bukan Admin)`);
+                            skipCount++;
+                            continue;
+                        }
+                    }
+
                     const ok = await sendStoryToGroup(sock, group.id, mediaData);
                     if (ok) successCount++; else failCount++;
                     
@@ -2450,7 +2473,8 @@ async function startBot() {
                 reportText += `├ 📺 Status WA: Terposting\n`;
                 reportText += `├ ✅ Berhasil: ${successCount} grup\n`;
                 reportText += `├ ❌ Gagal: ${failCount} grup\n`;
-                reportText += `└ ⏭️ Dilewati: ${skipCount} grup\n\n`;
+                reportText += `├ ⏭️ Dilewati: ${skipCount} grup\n`;
+                reportText += `└ 📋 Total Scan: ${groups.length} grup\n\n`;
                 reportText += `⏱️ Durasi: ${durasiStr}\n`;
                 reportText += `⏰ Selesai: ${endTime.toLocaleString('id-ID')}\n`;
                 
