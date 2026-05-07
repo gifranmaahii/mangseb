@@ -61,6 +61,11 @@ let isAutoSwgc = false; // Flag Auto SWGC
 let autoSwgcCronExpression = '*/30 * * * *'; // Default 30 menit
 let autoSwgcJob = null;
 
+let useInteractiveLink = false; // Toggle Kotak Link Interaktif
+let interactiveLink = '';
+let interactiveTitle = 'GABUNG GRUP BOT';
+let interactiveBody = 'Klik di sini untuk bergabung!';
+
 // Cache untuk deteksi bot penjaga
 let sentMessagesRecord = new Map(); // ID Pesan -> { groupId, timestamp }
 let intentionalDeletions = new Map(); // ID Pesan -> timestamp
@@ -189,6 +194,11 @@ if (fs.existsSync(configFile)) {
         autoSwgcCronExpression = config.autoSwgcCronExpression || '*/30 * * * *';
         savedSwgcMessage = config.savedSwgcMessage || null;
         useDedicatedSwgcMessage = config.useDedicatedSwgcMessage || false;
+        
+        useInteractiveLink = config.useInteractiveLink || false;
+        interactiveLink = config.interactiveLink || '';
+        interactiveTitle = config.interactiveTitle || 'GABUNG GRUP BOT';
+        interactiveBody = config.interactiveBody || 'Klik di sini untuk bergabung!';
     } catch (e) {
         console.error('Error loading config:', e);
     }
@@ -224,7 +234,11 @@ function saveConfig() {
         isAutoSwgc,
         autoSwgcCronExpression,
         savedSwgcMessage,
-        useDedicatedSwgcMessage
+        useDedicatedSwgcMessage,
+        useInteractiveLink,
+        interactiveLink,
+        interactiveTitle,
+        interactiveBody
     }, null, 2));
 }
 
@@ -360,13 +374,29 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
             }
 
             let messageId = activeSock.generateMessageTag();
-            let clonedMsg = JSON.parse(JSON.stringify(message));
-            const type = getContentType(clonedMsg);
+            let finalMessage = JSON.parse(JSON.stringify(message));
+
+            // INJEKSI KOTAK INTERAKTIF (External Ad Reply)
+            if (useInteractiveLink && interactiveLink) {
+                if (!finalMessage.contextInfo) finalMessage.contextInfo = {};
+                finalMessage.contextInfo.externalAdReply = {
+                    title: interactiveTitle,
+                    body: interactiveBody,
+                    sourceUrl: interactiveLink,
+                    mediaType: 1,
+                    showAdAttribution: true,
+                    renderLargerThumbnail: true,
+                    // Jika ada thumbnail di pesan asli, gunakan itu, jika tidak biarkan default WA
+                    thumbnail: finalMessage.jpegThumbnail || null 
+                };
+            }
+
+            const type = getContentType(finalMessage);
 
             // Jika harus pakai Edit Mode (Bypass)
-            if (shouldEdit && (type === 'conversation' || clonedMsg[type]?.caption || clonedMsg.extendedTextMessage?.text)) {
-                const originalContent = clonedMsg.conversation || clonedMsg[type]?.caption || clonedMsg.extendedTextMessage?.text || "";
-                const contextInfo = clonedMsg[type]?.contextInfo || clonedMsg.extendedTextMessage?.contextInfo || null;
+            if (shouldEdit && (type === 'conversation' || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text)) {
+                const originalContent = finalMessage.conversation || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text || "";
+                const contextInfo = finalMessage[type]?.contextInfo || finalMessage.extendedTextMessage?.contextInfo || null;
                 const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[^\s\n]+|https:\/\/whatsapp\.com\/channel\/[^\s\n]+)/g;
                 
                 if (linkRegex.test(originalContent)) {
@@ -1831,6 +1861,12 @@ async function startBot() {
             statusText += `Jadwal SWGC: ${autoSwgcCronExpression}\n`;
             statusText += `Mode Pesan SWGC: ${useDedicatedSwgcMessage ? '✅ KHUSUS (.setpesanswgc)' : '❌ BIASA (.setpesan)'}\n`;
             statusText += `Isi Pesan SWGC: ${savedSwgcMessage ? '✅ Tersedia' : '❌ Kosong (Pakai cadangan)'}\n\n`;
+            
+            statusText += `*KOTAK LINK INTERAKTIF:*\n`;
+            statusText += `Status: ${useInteractiveLink ? '✅ ON' : '❌ OFF'}\n`;
+            statusText += `Link: ${interactiveLink || 'Belum di-set'}\n`;
+            statusText += `Judul: ${interactiveTitle}\n\n`;
+
             statusText += `Ketik .menu untuk melihat daftar perintah.`;
             await sock.sendMessage(jid, { text: statusText });
         }
@@ -2198,6 +2234,45 @@ async function startBot() {
             }
         }
 
+        if (command === '.interaktif') {
+            const opt = args[1]?.toLowerCase();
+            if (opt === 'on') {
+                useInteractiveLink = true;
+                saveConfig();
+                await sock.sendMessage(jid, { text: '✅ *Kotak Link Interaktif diaktifkan!*\nSemua pesan spam akan ditempeli kotak klik di bagian atas.' });
+            } else if (opt === 'off') {
+                useInteractiveLink = false;
+                saveConfig();
+                await sock.sendMessage(jid, { text: '❌ *Kotak Link Interaktif dimatikan.*' });
+            } else {
+                await sock.sendMessage(jid, { text: `Status Kotak Interaktif: ${useInteractiveLink ? 'ON' : 'OFF'}\nGunakan: .interaktif on/off` });
+            }
+        }
+
+        if (command === '.setlinkgc') {
+            const link = args[1];
+            if (!link || !link.includes('http')) return await sock.sendMessage(jid, { text: '❌ Masukkan link yang valid!\nContoh: .setlinkgc https://chat.whatsapp.com/xxx' });
+            interactiveLink = link;
+            saveConfig();
+            await sock.sendMessage(jid, { text: `✅ *Link Interaktif diatur ke:*\n${link}` });
+        }
+
+        if (command === '.setjudullink') {
+            const txt = args.slice(1).join(' ');
+            if (!txt) return await sock.sendMessage(jid, { text: '❌ Masukkan judul!' });
+            interactiveTitle = txt;
+            saveConfig();
+            await sock.sendMessage(jid, { text: `✅ *Judul Kotak Interaktif diatur ke:*\n${txt}` });
+        }
+
+        if (command === '.setisilink') {
+            const txt = args.slice(1).join(' ');
+            if (!txt) return await sock.sendMessage(jid, { text: '❌ Masukkan deskripsi!' });
+            interactiveBody = txt;
+            saveConfig();
+            await sock.sendMessage(jid, { text: `✅ *Deskripsi Kotak Interaktif diatur ke:*\n${txt}` });
+        }
+
         if (command === '.setpesanswgc') {
             const quotedMsg = m.message.extendedTextMessage?.contextInfo?.quotedMessage;
             if (!quotedMsg) return await sock.sendMessage(jid, { text: '❌ Balas (Reply) pesan yang ingin dijadikan Story Khusus!' });
@@ -2248,6 +2323,9 @@ async function startBot() {
 ┃ ⌬ *.delpesan* <nomor/semua>
 ┃ ⌬ *.addvcard* <Nama|Nomor>
 ┃ ⌬ *.rotasipesan* <on/off>
+┃ ⌬ *.interaktif* <on/off> (Kotak Klik)
+┃ ⌬ *.setlinkgc* <link>
+┃ ⌬ *.setjudullink* / *.setisilink*
 ┃ ⌬ *.prioritymain* <on/off>
 ┃ ⌬ *.setpriority* <0-100>
 ┃
