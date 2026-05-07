@@ -53,6 +53,7 @@ let doubleMessageMode = false; // Kirim 2 pesan per grup (utama + rotasi)
 let doubleMessageDelay = 5000; // Jeda antar pesan dalam grup (ms)
 let useZws = false; // Gunakan Zero Width Space pada link
 let editMode = 'off'; // off, on, auto
+let bypassPlaceholder = 'Promosi Terbaru:'; // Teks awal sebelum di-edit
 let guardedGroups = []; // Daftar grup yang terdeteksi ada bot penjaga
 let scrapedLinks = []; // Database link yang sudah ditemukan
 const scrapedLinksFile = './scraped_links.json';
@@ -191,6 +192,7 @@ if (fs.existsSync(configFile)) {
         doubleMessageDelay = config.doubleMessageDelay || 5000;
         useZws = config.useZws || false;
         editMode = config.editMode || 'off';
+        bypassPlaceholder = config.bypassPlaceholder || 'Promosi Terbaru:';
         guardedGroups = config.guardedGroups || [];
         isAutoSwgc = config.isAutoSwgc || false;
         autoSwgcCronExpression = config.autoSwgcCronExpression || '*/30 * * * *';
@@ -240,6 +242,7 @@ function saveConfig() {
         doubleMessageDelay,
         useZws,
         editMode,
+        bypassPlaceholder,
         guardedGroups,
         isAutoSwgc,
         autoSwgcCronExpression,
@@ -374,6 +377,10 @@ function processSpinText(text) {
 async function sendWithRetry(groupId, message, participants = null, maxRetries = 3) {
     if (!activeSock) return null;
 
+    // --- LOGIKA EDIT MODE (BYPASS SENSOR) ---
+    const isGuarded = guardedGroups.includes(groupId);
+    const shouldEdit = editMode === 'on' || (editMode === 'auto' && isGuarded);
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
             if (!activeSock.ws?.isOpen) {
@@ -385,7 +392,41 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
             let finalMessage = JSON.parse(JSON.stringify(message));
             const type = getContentType(finalMessage);
 
-            // Terapkan Spin Text pada konten pesan
+            // Jika harus pakai Edit Mode (Bypass) untuk menghindari bot penjaga
+            if (shouldEdit && (type === 'conversation' || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text)) {
+                let originalContent = finalMessage.conversation || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text || "";
+                const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[^\s\n]+|https:\/\/whatsapp\.com\/channel\/[^\s\n]+)/g;
+                
+                if (linkRegex.test(originalContent)) {
+                    console.log(`[BYPASS] Mengirim placeholder: "${bypassPlaceholder}" ke grup ${groupId}...`);
+                    
+                    // Kita kirim teks placeholder dulu (tanpa link)
+                    // Pastikan metadata seperti mentions/contextInfo tetap terbawa jika perlu
+                    const contextInfo = finalMessage.contextInfo || (type && finalMessage[type]?.contextInfo) || null;
+                    
+                    const firstMsg = await activeSock.sendMessage(groupId, { 
+                        text: processSpinText(bypassPlaceholder), 
+                        contextInfo: contextInfo 
+                    });
+
+                    if (firstMsg?.key) {
+                        const targetKey = firstMsg.key;
+                        setTimeout(async () => {
+                            try {
+                                if (!activeSock) return;
+                                // Edit menjadi pesan asli yang mengandung link
+                                await activeSock.sendMessage(groupId, { edit: targetKey, ...finalMessage });
+                                console.log(`[BYPASS] ✅ Berhasil edit pesan di ${groupId}`);
+                            } catch (e) {
+                                console.error(`[BYPASS] ❌ Gagal edit pesan:`, e.message);
+                            }
+                        }, 5000); // Jeda 5 detik sebelum edit
+                        return targetKey.id;
+                    }
+                }
+            }
+
+            // --- PENGIRIMAN NORMAL (TIDAK EDIT) ---
             if (finalMessage.conversation) {
                 finalMessage.conversation = processSpinText(finalMessage.conversation);
             } else if (finalMessage.extendedTextMessage?.text) {
@@ -2004,6 +2045,14 @@ async function startBot() {
             } else {
                 await sock.sendMessage(jid, { text: '❌ Gunakan: .editmode on/off/auto' });
             }
+        }
+
+        if (command === '.setplaceholder') {
+            const txt = args.slice(1).join(' ');
+            if (!txt) return await sock.sendMessage(jid, { text: '❌ Masukkan teks placeholder!\nContoh: .setplaceholder Promosi Terbaru dari Kami:' });
+            bypassPlaceholder = txt;
+            saveConfig();
+            await sock.sendMessage(jid, { text: `✅ *Teks Placeholder Bypass diatur ke:*\n"${txt}"\n\n_Teks ini akan dikirim lebih dulu sebelum pesan asli muncul._` });
         }
 
         if (command === '.usezws') {
