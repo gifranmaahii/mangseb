@@ -24,6 +24,7 @@ const configFile = process.argv[2] ? `./config_${process.argv[2]}.json` : './con
 
 let savedMessage = null;
 let savedSwgcMessage = null; // Pesan khusus untuk SWGC
+let useDedicatedSwgcMessage = false; // Toggle pakai pesan khusus SWGC
 let savedMessages = []; // Untuk Multi-Pesan (Rotasi)
 let spamJob = null;
 let cronExpression = '0 * * * *'; // Default setiap jam
@@ -187,6 +188,7 @@ if (fs.existsSync(configFile)) {
         isAutoSwgc = config.isAutoSwgc || false;
         autoSwgcCronExpression = config.autoSwgcCronExpression || '*/30 * * * *';
         savedSwgcMessage = config.savedSwgcMessage || null;
+        useDedicatedSwgcMessage = config.useDedicatedSwgcMessage || false;
     } catch (e) {
         console.error('Error loading config:', e);
     }
@@ -221,7 +223,8 @@ function saveConfig() {
         guardedGroups,
         isAutoSwgc,
         autoSwgcCronExpression,
-        savedSwgcMessage
+        savedSwgcMessage,
+        useDedicatedSwgcMessage
     }, null, 2));
 }
 
@@ -791,10 +794,20 @@ async function runAutoSwgcCycle() {
     console.log('[AUTO-SWGC] Memulai siklus story otomatis...');
     
     try {
-        // Prioritas: Pesan Khusus SWGC -> Pesan Utama
-        const msgObj = savedSwgcMessage || savedMessage;
+        // Logika Mode:
+        let msgObj = null;
+        if (useDedicatedSwgcMessage) {
+            msgObj = savedSwgcMessage;
+            if (!msgObj) {
+                console.log('[AUTO-SWGC] Skip: Mode Khusus ON tapi pesan SWGC belum di-set.');
+                return;
+            }
+        } else {
+            msgObj = savedMessage;
+        }
+
         if (!msgObj) {
-            console.log('[AUTO-SWGC] Skip: Tidak ada pesan (utama maupun khusus SWGC).');
+            console.log('[AUTO-SWGC] Skip: Tidak ada pesan yang tersedia.');
             return;
         }
 
@@ -2077,8 +2090,19 @@ async function startBot() {
                 let fail = 0;
                 let skip = 0;
 
-                // Prioritas: Pesan Khusus SWGC -> Pesan Utama
-                const msgObj = savedSwgcMessage || savedMessage;
+                // Logika Mode:
+                let msgObj = null;
+                if (useDedicatedSwgcMessage) {
+                    msgObj = savedSwgcMessage;
+                    if (!msgObj) {
+                        return await sock.sendMessage(jid, { text: '❌ Mode Khusus SWGC AKTIF, tapi Anda belum set pesannya lewat .setpesanswgc' });
+                    }
+                } else {
+                    msgObj = savedMessage;
+                }
+
+                if (!msgObj) return await sock.sendMessage(jid, { text: '❌ Tidak ada pesan promosi yang tersedia.' });
+
                 const type = getContentType(msgObj.message);
                 let mediaData = null;
 
@@ -2189,6 +2213,21 @@ async function startBot() {
             saveConfig();
             await sock.sendMessage(jid, { text: '🗑️ *Pesan khusus SWGC dihapus.*\nSekarang fitur SWGC akan kembali menggunakan pesan utama dari .setpesan' });
         }
+
+        if (command === '.modeswgc') {
+            const opt = args[1]?.toLowerCase();
+            if (opt === 'on') {
+                useDedicatedSwgcMessage = true;
+                saveConfig();
+                await sock.sendMessage(jid, { text: '✅ *Mode Pesan Khusus SWGC diaktifkan!*\nStory akan menggunakan pesan dari .setpesanswgc' });
+            } else if (opt === 'off') {
+                useDedicatedSwgcMessage = false;
+                saveConfig();
+                await sock.sendMessage(jid, { text: '❌ *Mode Pesan Khusus SWGC dimatikan!*\nStory akan menggunakan pesan utama (.setpesan)' });
+            } else {
+                await sock.sendMessage(jid, { text: `Status Mode SWGC: ${useDedicatedSwgcMessage ? 'KHUSUS (ON)' : 'BIASA (OFF)'}\nGunakan: .modeswgc on/off` });
+            }
+        }
         
         if (command === '.menu' || command === '.help') {
             const menuText = `┏━━━━『 *MANGSEB BOT* 』━━━━┓
@@ -2198,6 +2237,7 @@ async function startBot() {
 ┃ ⌬ *.setpesanswgc* (Set pesan khusus story)
 ┃ ⌬ *.cekpesanswgc* (Lihat pesan story)
 ┃ ⌬ *.delpesanswgc* (Hapus pesan story)
+┃ ⌬ *.modeswgc* <on/off> (Toggle pesan khusus)
 ┃ ⌬ *.addpesan* (Tambah rotasi pesan)
 ┃ ⌬ *.cekpesan* (Lihat daftar rotasi)
 ┃ ⌬ *.delpesan* <nomor/semua>
