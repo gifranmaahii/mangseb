@@ -379,9 +379,8 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
             // --- 1. INJEKSI KOTAK LINK INTERAKTIF (External Ad Reply) ---
             if (useInteractiveLink && interactiveLink) {
                 const mType = getContentType(finalMessage);
-                if (!finalMessage.contextInfo) finalMessage.contextInfo = {};
                 
-                finalMessage.contextInfo.externalAdReply = {
+                const adReply = {
                     title: interactiveTitle,
                     body: interactiveBody,
                     sourceUrl: interactiveLink,
@@ -391,9 +390,14 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                     thumbnail: finalMessage.jpegThumbnail || null
                 };
 
-                // Untuk media, pastikan contextInfo ada di dalam objek medianya juga
-                if (mType !== 'conversation' && mType !== 'extendedTextMessage' && finalMessage[mType]) {
-                    finalMessage[mType].contextInfo = finalMessage.contextInfo;
+                // Injeksi ke Root
+                if (!finalMessage.contextInfo) finalMessage.contextInfo = {};
+                finalMessage.contextInfo.externalAdReply = adReply;
+
+                // Injeksi ke Type-Specific (Penting untuk Media/ExtendedText)
+                if (mType && finalMessage[mType]) {
+                    if (!finalMessage[mType].contextInfo) finalMessage[mType].contextInfo = {};
+                    finalMessage[mType].contextInfo.externalAdReply = adReply;
                 }
             }
 
@@ -403,7 +407,8 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
             if (shouldEdit && (type === 'conversation' || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text)) {
                 let originalContent = finalMessage.conversation || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text || "";
                 
-                const contextInfo = finalMessage.contextInfo || finalMessage[type]?.contextInfo || finalMessage.extendedTextMessage?.contextInfo || null;
+                // Ambil contextInfo yang sudah digabung (Newsletter + Link Box)
+                const contextInfo = finalMessage.contextInfo || (type && finalMessage[type]?.contextInfo) || null;
                 const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[^\s\n]+|https:\/\/whatsapp\.com\/channel\/[^\s\n]+)/g;
                 
                 if (linkRegex.test(originalContent)) {
