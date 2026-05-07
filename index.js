@@ -516,16 +516,28 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
     }
     return null;
 }
-// Fungsi kirim Kotak Link Interaktif - WA auto-generate preview card
+// Fungsi kirim Kotak Link Interaktif (CTA URL Button via nativeFlow)
+// Bekerja di WA biasa (Android/iPhone) - target audience di grup
 async function sendInteractiveButton(groupId) {
     if (!activeSock || !interactiveLink) return;
 
-    const bodyText = interactiveBody || "Klik link di bawah untuk bergabung!";
-    const titleText = interactiveTitle || "GABUNG GRUP";
+    const msgContent = {
+        text: interactiveBody || "Klik tombol di bawah untuk bergabung!",
+        footer: "© Mangseb Bot",
+        nativeFlow: [{
+            text: interactiveTitle || "Gabung ke grup",
+            url: interactiveLink
+        }]
+    };
 
-    const result = await activeSock.sendMessage(groupId, {
-        text: `*${titleText}*\n${bodyText}\n\n${interactiveLink}`
-    });
+    if (interactiveThumbnail) {
+        msgContent.image = interactiveThumbnail;
+        msgContent.caption = msgContent.text;
+        msgContent.hasMediaAttachment = true;
+        delete msgContent.text;
+    }
+
+    const result = await activeSock.sendMessage(groupId, msgContent);
     return result;
 }
 
