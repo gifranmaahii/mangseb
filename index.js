@@ -398,7 +398,9 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
             const type = getContentType(finalMessage);
 
             // Jika harus pakai Edit Mode (Bypass) untuk menghindari bot penjaga
-            if (shouldEdit && (type === 'conversation' || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text)) {
+            // Skip jika pesan adalah forward dari newsletter/saluran (edit tidak bisa bawa info saluran)
+            const hasNewsletterInfo = finalMessage.extendedTextMessage?.contextInfo?.forwardedNewsletterMessageInfo;
+            if (shouldEdit && !hasNewsletterInfo && (type === 'conversation' || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text)) {
                 let originalContent = finalMessage.conversation || finalMessage[type]?.caption || finalMessage.extendedTextMessage?.text || "";
                 const linkRegex = /(https:\/\/chat\.whatsapp\.com\/[^\s\n]+|https:\/\/whatsapp\.com\/channel\/[^\s\n]+)/g;
                 
