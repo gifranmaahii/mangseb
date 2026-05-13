@@ -580,6 +580,10 @@ async function runSpamCycle() {
             console.log('[SPAM] Siklus sebelumnya masih berjalan, melewati siklus ini.');
             return;
         }
+        if (!isSpamming) {
+            console.log('[SPAM] isSpamming false, siklus dibatalkan.');
+            return;
+        }
         if (!activeSock) {
             console.log('[SPAM] activeSock belum siap, melewati siklus.');
             return;
@@ -836,6 +840,7 @@ function stopSpamJob() {
         spamJob.stop();
         spamJob = null;
     }
+    isSpamming = false;
     spamJobRunning = false;
     spamCycleCount = 0;
 }
