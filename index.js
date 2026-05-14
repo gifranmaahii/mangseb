@@ -763,9 +763,13 @@ async function runSpamCycle() {
                 
 
 
-                // Jeda antar grup
+                // Jeda antar grup (interruptible — cek isSpamming tiap 500ms)
                 if (i < groups.length - 1) {
-                    await new Promise(resolve => setTimeout(resolve, sendDelayMs));
+                    const jedaEnd = Date.now() + sendDelayMs;
+                    while (Date.now() < jedaEnd && isSpamming) {
+                        await new Promise(r => setTimeout(r, 500));
+                    }
+                    if (!isSpamming) break;
                 }
             }
             
@@ -826,11 +830,11 @@ function startSpamJob() {
     isSpamming = true;
     spamCycleCount = 0;
     
-    // Langsung eksekusi 1 kali saat start
-    runSpamCycle();
+    // Langsung eksekusi 1 kali saat start (non-blocking agar command tetap responsif)
+    setImmediate(() => runSpamCycle());
 
-    // Jadwalkan untuk eksekusi selanjutnya
-    spamJob = cron.schedule(cronExpression, runSpamCycle);
+    // Jadwalkan untuk eksekusi selanjutnya (non-blocking)
+    spamJob = cron.schedule(cronExpression, () => setImmediate(() => runSpamCycle()));
     
     spamJob.start();
 }
