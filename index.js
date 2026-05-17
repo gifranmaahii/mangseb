@@ -9,6 +9,8 @@ const {
     generateWAMessageFromContent,
     generateWAMessageContent,
     downloadContentFromMessage,
+    getAggregateVotesInPollMessage,
+    decryptPollVote,
     proto
 } = require('@itsliaaa/baileys');
 const pino = require('pino');
@@ -77,6 +79,11 @@ let guardedGroups = []; // Daftar grup yang terdeteksi ada bot penjaga
 let hidetagGroups = []; // Daftar grup yang akan dikirim dengan hidetag
 let scrapedLinks = []; // Database link yang sudah ditemukan
 const scrapedLinksFile = './scraped_links.json';
+
+// Session poll interaktif (untuk blacklist via ceklis)
+// Map<pollMessageId, { type, page, allItems, ownerJid, createdAt }>
+const activePolls = new Map();
+const POLL_PAGE_SIZE = 11; // WA batas poll = 12 opsi; sisakan 1 untuk "Selesai/Lanjut"
 
 let isAutoSwgc = false; // Flag Auto SWGC
 let autoSwgcCronExpression = '*/30 * * * *'; // Default 30 menit
@@ -363,6 +370,105 @@ function resolveGroupSelection(args, sourceGroups) {
 }
 
 const { exec } = require('child_process');
+
+// Helper: kirim poll ceklis untuk pilih banyak grup sekaligus
+// type: 'blacklist-add' | 'blacklist-del' | 'hidetag-add' | 'hidetag-del'
+async function sendGroupPickerPoll(targetJid, items, type, page = 0, carryOver = []) {
+    if (!activeSock) return;
+    if (items.length === 0) {
+        return activeSock.sendMessage(targetJid, { text: '⚠️ Tidak ada grup untuk ditampilkan.' });
+    }
+
+    const totalPages = Math.ceil(items.length / POLL_PAGE_SIZE);
+    const pageItems = items.slice(page * POLL_PAGE_SIZE, (page + 1) * POLL_PAGE_SIZE);
+
+    // Format opsi: "1. Nama Grup" supaya user paham
+    const baseIndex = page * POLL_PAGE_SIZE;
+    const pageOptionNames = pageItems.map((g, i) => `${baseIndex + i + 1}. ${g.subject.substring(0, 80)}`);
+
+    // Tombol kontrol di akhir poll
+    const isLastPage = page >= totalPages - 1;
+    const controlOptionName = isLastPage ? '✅ SELESAI (proses centangan)' : '➡️ HALAMAN BERIKUTNYA';
+    const allOptionNames = [...pageOptionNames, controlOptionName];
+
+    const titleMap = {
+        'blacklist-add': '🚫 BLACKLIST GRUP',
+        'blacklist-del': '🔓 HAPUS BLACKLIST',
+        'hidetag-add': '📢 TAMBAH HIDETAG',
+        'hidetag-del': '🔕 HAPUS HIDETAG',
+    };
+    const title = `${titleMap[type] || 'PILIH GRUP'}\nHal ${page + 1}/${totalPages} • Centang grup yg mau diproses, lalu pilih SELESAI/LANJUT`;
+
+    // Generate poll dengan messageSecret yang kita kontrol (untuk decrypt vote nanti)
+    const messageSecret = crypto.randomBytes(32);
+    const pollMsg = await generateWAMessageFromContent(targetJid, {
+        messageContextInfo: { messageSecret },
+        pollCreationMessage: {
+            name: title,
+            options: allOptionNames.map(name => ({ optionName: name })),
+            selectableOptionsCount: 0 // 0 = multi-select
+        }
+    }, { userJid: activeSock.user.id });
+
+    await activeSock.relayMessage(targetJid, pollMsg.message, { messageId: pollMsg.key.id });
+
+    activePolls.set(pollMsg.key.id, {
+        type,
+        page,
+        totalPages,
+        pageItems,
+        allItems: items,
+        ownerJid: targetJid,
+        pollMsgId: pollMsg.key.id,
+        pollCreatorJid: jidNormalizedUser(activeSock.user.id),
+        messageSecret,
+        optionNames: allOptionNames,
+        controlOptionName,
+        selectedSoFar: carryOver,
+        createdAt: Date.now()
+    });
+
+    // Cleanup poll session yang lewat 30 menit
+    for (const [id, sess] of activePolls.entries()) {
+        if (Date.now() - sess.createdAt > 30 * 60 * 1000) activePolls.delete(id);
+    }
+
+    return pollMsg;
+}
+
+// Eksekusi action setelah user pilih SELESAI
+async function executePollAction(session) {
+    const { type, selectedSoFar, ownerJid } = session;
+    if (!selectedSoFar || selectedSoFar.length === 0) {
+        return activeSock.sendMessage(ownerJid, { text: '⚠️ Tidak ada grup yg dicentang. Dibatalkan.' });
+    }
+
+    const ids = selectedSoFar.map(g => g.id);
+    let count = 0;
+
+    if (type === 'blacklist-add') {
+        for (const id of ids) if (!blacklistedGroups.includes(id)) { blacklistedGroups.push(id); count++; }
+    } else if (type === 'blacklist-del') {
+        for (const id of ids) {
+            const i = blacklistedGroups.indexOf(id);
+            if (i > -1) { blacklistedGroups.splice(i, 1); count++; }
+        }
+    } else if (type === 'hidetag-add') {
+        for (const id of ids) if (!hidetagGroups.includes(id)) { hidetagGroups.push(id); count++; }
+    } else if (type === 'hidetag-del') {
+        for (const id of ids) {
+            const i = hidetagGroups.indexOf(id);
+            if (i > -1) { hidetagGroups.splice(i, 1); count++; }
+        }
+    }
+    saveConfig();
+
+    const verb = type.endsWith('add') ? 'ditambahkan' : 'dihapus';
+    let reply = `✅ *${count} grup berhasil ${verb}*\n\n`;
+    selectedSoFar.slice(0, 15).forEach((g, i) => reply += `${i + 1}. ${g.subject.substring(0, 45)}\n`);
+    if (selectedSoFar.length > 15) reply += `... dan ${selectedSoFar.length - 15} grup lain`;
+    return activeSock.sendMessage(ownerJid, { text: reply });
+}
 
 async function handleJadibot(senderJid, type, number = '') {
     const cleanNumber = number ? number.replace(/[^0-9]/g, '') : `guest_${Date.now().toString().slice(-6)}`;
@@ -1120,7 +1226,7 @@ async function startBot() {
         retryRequestDelayMs: 5000,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000, // 60 detik, bukan 0 (infinite = bocor memori)
-        emitOwnEvents: false, // tidak perlu echo event diri sendiri
+        // emitOwnEvents harus default (true) agar vote poll dari diri sendiri ter-handle
         keepAliveIntervalMs: 30000,
     });
 
@@ -1227,6 +1333,85 @@ async function startBot() {
             if (messageTimestamp && nowSeconds - messageTimestamp > 60) {
                 // Abaikan pesan yang lebih tua dari 60 detik
                 return;
+            }
+
+            // --- HANDLER POLL VOTE (CEKLIS GRUP) ---
+            // User vote -> WA kirim pollUpdateMessage yg refer ke poll asli
+            if (msg.message?.pollUpdateMessage) {
+                try {
+                    const pollUpdate = msg.message.pollUpdateMessage;
+                    const pollMsgKey = pollUpdate.pollCreationMessageKey;
+                    const session = activePolls.get(pollMsgKey?.id);
+                    if (!session) return; // poll tidak dikenal / kadaluarsa
+
+                    const voterJid = msg.key.participant || msg.key.remoteJid;
+
+                    // Decrypt vote untuk dapat hash opsi yg dicentang
+                    const decrypted = decryptPollVote(pollUpdate.vote, {
+                        pollCreatorJid: session.pollCreatorJid,
+                        pollMsgId: session.pollMsgId,
+                        pollEncKey: session.messageSecret,
+                        voterJid: jidNormalizedUser(voterJid)
+                    });
+
+                    if (!decrypted?.selectedOptions) return;
+
+                    // Hash setiap option name lalu match dengan hash dari vote
+                    const checkedNames = [];
+                    for (const optName of session.optionNames) {
+                        const hash = crypto.createHash('sha256').update(Buffer.from(optName)).digest();
+                        const isChecked = decrypted.selectedOptions.some(sel => Buffer.compare(sel, hash) === 0);
+                        if (isChecked) checkedNames.push(optName);
+                    }
+
+                    if (checkedNames.length === 0) return;
+
+                    // Pisahkan: opsi grup vs tombol kontrol
+                    const groupChecks = checkedNames.filter(n => n !== session.controlOptionName);
+                    const controlClicked = checkedNames.includes(session.controlOptionName);
+
+                    // Kalau user belum klik tombol kontrol, tunggu
+                    if (!controlClicked) {
+                        return;
+                    }
+
+                    // Map nama opsi -> objek grup
+                    const newlySelected = [];
+                    for (const optName of groupChecks) {
+                        const num = parseInt(optName.split('.')[0]);
+                        const idx = num - 1;
+                        if (!isNaN(idx) && idx >= 0 && idx < session.allItems.length) {
+                            newlySelected.push(session.allItems[idx]);
+                        }
+                    }
+
+                    // Gabung dengan pilihan halaman sebelumnya (dedup by id)
+                    const merged = [...session.selectedSoFar];
+                    const existingIds = new Set(merged.map(g => g.id));
+                    for (const g of newlySelected) {
+                        if (!existingIds.has(g.id)) {
+                            merged.push(g);
+                            existingIds.add(g.id);
+                        }
+                    }
+
+                    // Hapus session lama (one-shot) supaya vote berikutnya tidak men-trigger ulang
+                    activePolls.delete(pollMsgKey.id);
+
+                    if (session.page >= session.totalPages - 1) {
+                        // SELESAI -> eksekusi
+                        await executePollAction({ ...session, selectedSoFar: merged });
+                    } else {
+                        // LANJUT halaman berikutnya
+                        await sock.sendMessage(session.ownerJid, {
+                            text: `✅ Halaman ${session.page + 1}/${session.totalPages} dicatat (${newlySelected.length} grup dicentang).\nLanjut ke halaman ${session.page + 2}...`
+                        });
+                        await sendGroupPickerPoll(session.ownerJid, session.allItems, session.type, session.page + 1, merged);
+                    }
+                } catch (e) {
+                    console.error('[POLL] Error handling vote:', e.message);
+                }
+                return; // jangan lanjut ke handler text command
             }
 
             const jid = msg.key.remoteJid;
@@ -1524,24 +1709,31 @@ async function startBot() {
             const groups = await getGroups();
             const available = groups.filter(g => !blacklistedGroups.includes(g.id));
 
-            // Tanpa argumen -> tampilkan menu bantuan + 30 grup pertama
+            // Tanpa argumen -> KIRIM POLL CEKLIS (cara paling cepat)
             if (args.length === 1) {
                 if (available.length === 0) {
                     return await sock.sendMessage(jid, { text: '✅ Semua grup sudah di-blacklist.' });
                 }
-
-                let p = `🚫 *MENU BLACKLIST GRUP*\n\n`;
-                p += `*Cara cepat:*\n`;
-                p += `• \`.blacklist 1,3,5\` — pilih nomor tertentu\n`;
-                p += `• \`.blacklist 1-20\` — range nomor 1 sampai 20\n`;
-                p += `• \`.blacklist 1,5-10,15\` — kombinasi\n`;
-                p += `• \`.blacklist match agama keluarga\` — semua grup yg namanya mengandung kata\n`;
-                p += `• \`.blacklist all confirm\` — blacklist SEMUA grup yg belum di-blacklist\n\n`;
-                p += `*Daftar grup yg bisa di-blacklist:*\n`;
-                available.slice(0, 30).forEach((g, i) => {
-                    p += `${i + 1}. ${g.subject.substring(0, 45)}\n`;
+                await sock.sendMessage(jid, {
+                    text: `🚫 *BLACKLIST GRUP — MODE CEKLIS*\n\n` +
+                          `Total grup yg bisa di-blacklist: *${available.length}*\n` +
+                          `Aku kirim poll di bawah — *centang grup yg mau di-blacklist*, lalu vote *SELESAI* untuk eksekusi.\n` +
+                          `Kalau >11 grup, aku kirim per halaman (vote *LANJUT* untuk halaman berikutnya).\n\n` +
+                          `_Cara lain (manual ketik):_\n` +
+                          `• \`.blacklist 1,3,5-10\` — pilih nomor/range\n` +
+                          `• \`.blacklist match agama\` — by kata di nama grup\n` +
+                          `• \`.blacklist all confirm\` — semua sekaligus\n` +
+                          `• \`.blacklist teks\` — paksa mode teks (tanpa poll)`
                 });
-                if (available.length > 30) p += `\n_... dan ${available.length - 30} grup lain. Pakai .listgrup untuk lihat semua._`;
+                return await sendGroupPickerPoll(jid, available, 'blacklist-add', 0);
+            }
+
+            // .blacklist teks -> tampilkan daftar nomor seperti versi sebelumnya
+            if (args[1]?.toLowerCase() === 'teks' || args[1]?.toLowerCase() === 'list') {
+                let p = `🚫 *DAFTAR GRUP UTK BLACKLIST (TEKS)*\n\n`;
+                available.slice(0, 50).forEach((g, i) => p += `${i + 1}. ${g.subject.substring(0, 45)}\n`);
+                if (available.length > 50) p += `\n_... dan ${available.length - 50} grup lain._`;
+                p += `\n\n_Ketik mis: .blacklist 1,3,5-10_`;
                 return await sock.sendMessage(jid, { text: p });
             }
 
@@ -1589,19 +1781,16 @@ async function startBot() {
                 if (blacklisted.length === 0) {
                     return await sock.sendMessage(jid, { text: '⚠️ Tidak ada grup ter-blacklist.' });
                 }
-
-                let p = `🔓 *MENU UN-BLACKLIST GRUP*\n\n`;
-                p += `*Cara cepat:*\n`;
-                p += `• \`.unblacklist 1,3,5\` — angkat nomor tertentu\n`;
-                p += `• \`.unblacklist 1-10\` — range nomor 1 sampai 10\n`;
-                p += `• \`.unblacklist match agama\` — semua yg cocok kata\n`;
-                p += `• \`.unblacklist all confirm\` — bersihkan SEMUA blacklist\n\n`;
-                p += `*Daftar grup ter-blacklist (${blacklisted.length}):*\n`;
-                blacklisted.slice(0, 30).forEach((g, i) => {
-                    p += `${i + 1}. ${g.subject.substring(0, 45)}\n`;
+                await sock.sendMessage(jid, {
+                    text: `🔓 *HAPUS BLACKLIST — MODE CEKLIS*\n\n` +
+                          `Total grup ter-blacklist: *${blacklisted.length}*\n` +
+                          `Centang grup yg mau dilepas dari blacklist, lalu vote *SELESAI*.\n\n` +
+                          `_Manual:_\n` +
+                          `• \`.unblacklist 1,3,5-10\`\n` +
+                          `• \`.unblacklist match agama\`\n` +
+                          `• \`.unblacklist all confirm\``
                 });
-                if (blacklisted.length > 30) p += `\n_... dan ${blacklisted.length - 30} grup lain._`;
-                return await sock.sendMessage(jid, { text: p });
+                return await sendGroupPickerPoll(jid, blacklisted, 'blacklist-del', 0);
             }
 
             const sel = resolveGroupSelection(args.slice(1), blacklisted);
@@ -1645,15 +1834,13 @@ async function startBot() {
             const available = groups.filter(g => !hidetagGroups.includes(g.id));
 
             if (args.length === 1) {
-                let p = `📢 *MENU TAMBAH HIDETAG GRUP*\n\n`;
-                p += `*Cara cepat:*\n`;
-                p += `• \`.addhidetag 1,3,5\`\n`;
-                p += `• \`.addhidetag 1-20\`\n`;
-                p += `• \`.addhidetag match official\`\n`;
-                p += `• \`.addhidetag all confirm\`\n\n`;
-                p += `Total grup belum hidetag: ${available.length}\n`;
-                p += `_Grup yg didaftarkan akan otomatis dipasang hidetag saat promosi._`;
-                return await sock.sendMessage(jid, { text: p });
+                if (available.length === 0) {
+                    return await sock.sendMessage(jid, { text: '✅ Semua grup sudah ada di list hidetag.' });
+                }
+                await sock.sendMessage(jid, {
+                    text: `📢 *TAMBAH HIDETAG — MODE CEKLIS*\n\nCentang grup yg mau dipasang hidetag, lalu vote *SELESAI*.\n\n_Manual:_\n• \`.addhidetag 1,3,5-10\`\n• \`.addhidetag match official\`\n• \`.addhidetag all confirm\``
+                });
+                return await sendGroupPickerPoll(jid, available, 'hidetag-add', 0);
             }
 
             const sel = resolveGroupSelection(args.slice(1), available);
@@ -1688,13 +1875,10 @@ async function startBot() {
 
             if (args.length === 1) {
                 if (tagged.length === 0) return await sock.sendMessage(jid, { text: '⚠️ Tidak ada grup ter-hidetag.' });
-                let p = `🔓 *MENU HAPUS HIDETAG*\n\n`;
-                p += `• \`.delhidetag 1,3,5\`\n`;
-                p += `• \`.delhidetag 1-10\`\n`;
-                p += `• \`.delhidetag all confirm\`\n\n`;
-                p += `*Daftar hidetag (${tagged.length}):*\n`;
-                tagged.slice(0, 30).forEach((g, i) => p += `${i + 1}. ${g.subject.substring(0, 45)}\n`);
-                return await sock.sendMessage(jid, { text: p });
+                await sock.sendMessage(jid, {
+                    text: `🔕 *HAPUS HIDETAG — MODE CEKLIS*\n\nCentang grup yg mau dilepas dari hidetag, lalu vote *SELESAI*.\n\n_Manual:_\n• \`.delhidetag 1,3,5-10\`\n• \`.delhidetag all confirm\``
+                });
+                return await sendGroupPickerPoll(jid, tagged, 'hidetag-del', 0);
             }
 
             const sel = resolveGroupSelection(args.slice(1), tagged);
