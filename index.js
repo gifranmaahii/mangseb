@@ -290,6 +290,78 @@ function saveConfig() {
     }, null, 2));
 }
 
+// Helper: parse argumen seperti "1,3,5-10,15" -> daftar index unik
+// Mendukung: "1,2,3" / "5-10" / "1,3,5-10,15" / "all"
+function parseIndexList(args, maxLen) {
+    const result = new Set();
+    for (const raw of args) {
+        const token = String(raw).trim();
+        if (!token) continue;
+        // pisah jika ada koma di dalam satu token (mis. user nulis "1,2,3")
+        const parts = token.split(',').map(s => s.trim()).filter(Boolean);
+        for (const part of parts) {
+            // range "5-10"
+            const range = part.match(/^(\d+)-(\d+)$/);
+            if (range) {
+                let a = parseInt(range[1]);
+                let b = parseInt(range[2]);
+                if (a > b) [a, b] = [b, a];
+                for (let i = a; i <= b; i++) {
+                    if (i >= 1 && i <= maxLen) result.add(i - 1);
+                }
+                continue;
+            }
+            // angka tunggal
+            if (/^\d+$/.test(part)) {
+                const n = parseInt(part);
+                if (n >= 1 && n <= maxLen) result.add(n - 1);
+            }
+        }
+    }
+    return [...result].sort((a, b) => a - b);
+}
+
+// Helper: proses argumen blacklist/unblacklist (dipakai oleh .blacklist & .unblacklist)
+// Return { ids: [groupIds], mode: 'success'|'help'|'empty', meta: {...} }
+function resolveGroupSelection(args, sourceGroups) {
+    if (sourceGroups.length === 0) return { ids: [], mode: 'empty' };
+
+    // .blacklist all  /  .blacklist all confirm
+    if (args[0]?.toLowerCase() === 'all') {
+        if (args[1]?.toLowerCase() !== 'confirm') {
+            return { mode: 'need-confirm', total: sourceGroups.length };
+        }
+        return { ids: sourceGroups.map(g => g.id), mode: 'success', label: `${sourceGroups.length} grup (semua)` };
+    }
+
+    // .blacklist match <kata1> <kata2> ...
+    if (args[0]?.toLowerCase() === 'match') {
+        const keywords = args.slice(1).map(s => s.toLowerCase()).filter(Boolean);
+        if (keywords.length === 0) return { mode: 'help-match' };
+        const matched = sourceGroups.filter(g => {
+            const name = (g.subject || '').toLowerCase();
+            return keywords.some(k => name.includes(k));
+        });
+        return {
+            ids: matched.map(g => g.id),
+            mode: 'success',
+            label: `${matched.length} grup cocok kata: ${keywords.join(', ')}`,
+            previewNames: matched.slice(0, 10).map(g => g.subject)
+        };
+    }
+
+    // Mode index: angka, range, mix
+    const indices = parseIndexList(args, sourceGroups.length);
+    if (indices.length === 0) return { mode: 'help' };
+
+    return {
+        ids: indices.map(i => sourceGroups[i].id),
+        mode: 'success',
+        label: `${indices.length} grup terpilih`,
+        previewNames: indices.slice(0, 10).map(i => sourceGroups[i].subject)
+    };
+}
+
 const { exec } = require('child_process');
 
 async function handleJadibot(senderJid, type, number = '') {
@@ -1452,43 +1524,61 @@ async function startBot() {
             const groups = await getGroups();
             const available = groups.filter(g => !blacklistedGroups.includes(g.id));
 
+            // Tanpa argumen -> tampilkan menu bantuan + 30 grup pertama
             if (args.length === 1) {
                 if (available.length === 0) {
                     return await sock.sendMessage(jid, { text: '✅ Semua grup sudah di-blacklist.' });
                 }
 
-                const options = available.slice(0, 11).map(g => g.subject.substring(0, 50));
-                options.push('❌ BATAL');
-
-                await sock.sendMessage(jid, {
-                    poll: {
-                        name: '🚫 *MENU BLACKLIST GRUP*\n(Silakan pilih nama grup di bawah ini)',
-                        values: options,
-                        selectableCount: 1
-                    }
+                let p = `🚫 *MENU BLACKLIST GRUP*\n\n`;
+                p += `*Cara cepat:*\n`;
+                p += `• \`.blacklist 1,3,5\` — pilih nomor tertentu\n`;
+                p += `• \`.blacklist 1-20\` — range nomor 1 sampai 20\n`;
+                p += `• \`.blacklist 1,5-10,15\` — kombinasi\n`;
+                p += `• \`.blacklist match agama keluarga\` — semua grup yg namanya mengandung kata\n`;
+                p += `• \`.blacklist all confirm\` — blacklist SEMUA grup yg belum di-blacklist\n\n`;
+                p += `*Daftar grup yg bisa di-blacklist:*\n`;
+                available.slice(0, 30).forEach((g, i) => {
+                    p += `${i + 1}. ${g.subject.substring(0, 45)}\n`;
                 });
-                return;
+                if (available.length > 30) p += `\n_... dan ${available.length - 30} grup lain. Pakai .listgrup untuk lihat semua._`;
+                return await sock.sendMessage(jid, { text: p });
             }
 
-            // Manual handling
-            let addedCount = 0;
-            for (let i = 1; i < args.length; i++) {
-                const target = args[i];
-                let groupId = target;
-                if (!isNaN(target) && Number(target) > 0 && Number(target) <= groups.length) {
-                    groupId = groups[Number(target) - 1].id;
-                }
-                if (groupId.endsWith('@g.us') && !blacklistedGroups.includes(groupId)) {
-                    blacklistedGroups.push(groupId);
-                    addedCount++;
+            const sel = resolveGroupSelection(args.slice(1), available);
+
+            if (sel.mode === 'need-confirm') {
+                return await sock.sendMessage(jid, {
+                    text: `⚠️ Akan mem-blacklist *SEMUA ${sel.total} grup* yg belum di-blacklist.\n\nKalau yakin ketik:\n*.blacklist all confirm*`
+                });
+            }
+            if (sel.mode === 'help-match') {
+                return await sock.sendMessage(jid, { text: '❌ Masukkan kata kunci.\nContoh: *.blacklist match agama keluarga*' });
+            }
+            if (sel.mode === 'help' || sel.mode === 'empty' || sel.ids.length === 0) {
+                return await sock.sendMessage(jid, { text: '❌ Tidak ada grup yg cocok.\nContoh: *.blacklist 1-10* atau *.blacklist match agama*' });
+            }
+
+            // Tambahkan ke blacklist (skip yang sudah ada)
+            let added = 0;
+            for (const id of sel.ids) {
+                if (!blacklistedGroups.includes(id)) {
+                    blacklistedGroups.push(id);
+                    added++;
                 }
             }
-            if (addedCount > 0) {
-                saveConfig();
-                await sock.sendMessage(jid, { text: `✅ Berhasil mem-blacklist ${addedCount} grup.` });
-            } else {
-                await sock.sendMessage(jid, { text: `⚠️ Gagal/ID salah.` });
+            saveConfig();
+
+            let reply = `✅ *Berhasil blacklist ${added} grup*`;
+            if (sel.label) reply += `\n📌 ${sel.label}`;
+            if (sel.previewNames && sel.previewNames.length > 0) {
+                reply += `\n\n*Contoh grup:*\n`;
+                sel.previewNames.forEach((n, i) => reply += `${i + 1}. ${n.substring(0, 45)}\n`);
+                if (sel.ids.length > sel.previewNames.length) {
+                    reply += `... dan ${sel.ids.length - sel.previewNames.length} grup lainnya`;
+                }
             }
+            return await sock.sendMessage(jid, { text: reply });
         }
 
         if (command === '.unblacklist') {
@@ -1500,88 +1590,129 @@ async function startBot() {
                     return await sock.sendMessage(jid, { text: '⚠️ Tidak ada grup ter-blacklist.' });
                 }
 
-                const options = blacklisted.slice(0, 11).map(g => g.subject.substring(0, 50));
-                options.push('❌ BATAL');
-
-                await sock.sendMessage(jid, {
-                    poll: {
-                        name: '🔓 *MENU UN-BLACKLIST GRUP*\n(Pilih grup untuk diaktifkan kembali)',
-                        values: options,
-                        selectableCount: 1
-                    }
+                let p = `🔓 *MENU UN-BLACKLIST GRUP*\n\n`;
+                p += `*Cara cepat:*\n`;
+                p += `• \`.unblacklist 1,3,5\` — angkat nomor tertentu\n`;
+                p += `• \`.unblacklist 1-10\` — range nomor 1 sampai 10\n`;
+                p += `• \`.unblacklist match agama\` — semua yg cocok kata\n`;
+                p += `• \`.unblacklist all confirm\` — bersihkan SEMUA blacklist\n\n`;
+                p += `*Daftar grup ter-blacklist (${blacklisted.length}):*\n`;
+                blacklisted.slice(0, 30).forEach((g, i) => {
+                    p += `${i + 1}. ${g.subject.substring(0, 45)}\n`;
                 });
-                return;
+                if (blacklisted.length > 30) p += `\n_... dan ${blacklisted.length - 30} grup lain._`;
+                return await sock.sendMessage(jid, { text: p });
             }
 
-            let removedCount = 0;
-            for (let i = 1; i < args.length; i++) {
-                const target = args[i];
-                let targetId = target;
-                if (!isNaN(target) && Number(target) > 0 && Number(target) <= groupsList.length) {
-                    targetId = groupsList[Number(target) - 1].id;
-                }
-                const index = blacklistedGroups.indexOf(targetId);
-                if (index > -1) {
-                    blacklistedGroups.splice(index, 1);
-                    removedCount++;
+            const sel = resolveGroupSelection(args.slice(1), blacklisted);
+
+            if (sel.mode === 'need-confirm') {
+                return await sock.sendMessage(jid, {
+                    text: `⚠️ Akan menghapus *SEMUA ${sel.total} grup* dari blacklist.\n\nKalau yakin ketik:\n*.unblacklist all confirm*`
+                });
+            }
+            if (sel.mode === 'help-match') {
+                return await sock.sendMessage(jid, { text: '❌ Masukkan kata kunci.\nContoh: *.unblacklist match agama*' });
+            }
+            if (sel.mode === 'help' || sel.mode === 'empty' || sel.ids.length === 0) {
+                return await sock.sendMessage(jid, { text: '❌ Tidak ada grup yg cocok.\nContoh: *.unblacklist 1-10*' });
+            }
+
+            let removed = 0;
+            for (const id of sel.ids) {
+                const idx = blacklistedGroups.indexOf(id);
+                if (idx > -1) {
+                    blacklistedGroups.splice(idx, 1);
+                    removed++;
                 }
             }
-            if (removedCount > 0) {
-                saveConfig();
-                await sock.sendMessage(jid, { text: `✅ Berhasil menghapus ${removedCount} grup dari blacklist.` });
-            } else {
-                await sock.sendMessage(jid, { text: `⚠️ Gagal menghapus.` });
+            saveConfig();
+
+            let reply = `✅ *Berhasil hapus ${removed} grup dari blacklist*`;
+            if (sel.label) reply += `\n📌 ${sel.label}`;
+            if (sel.previewNames && sel.previewNames.length > 0) {
+                reply += `\n\n*Contoh grup:*\n`;
+                sel.previewNames.forEach((n, i) => reply += `${i + 1}. ${n.substring(0, 45)}\n`);
+                if (sel.ids.length > sel.previewNames.length) {
+                    reply += `... dan ${sel.ids.length - sel.previewNames.length} grup lainnya`;
+                }
             }
+            return await sock.sendMessage(jid, { text: reply });
         }
 
         if (command === '.addhidetag') {
             const groups = await getGroups();
-            let addedCount = 0;
-            for (let i = 1; i < args.length; i++) {
-                const target = args[i];
-                let groupId = target;
-                if (!isNaN(target) && Number(target) > 0 && Number(target) <= groups.length) {
-                    groupId = groups[Number(target) - 1].id;
-                }
-                if (groupId.endsWith('@g.us') && !hidetagGroups.includes(groupId)) {
-                    hidetagGroups.push(groupId);
-                    addedCount++;
+            const available = groups.filter(g => !hidetagGroups.includes(g.id));
+
+            if (args.length === 1) {
+                let p = `📢 *MENU TAMBAH HIDETAG GRUP*\n\n`;
+                p += `*Cara cepat:*\n`;
+                p += `• \`.addhidetag 1,3,5\`\n`;
+                p += `• \`.addhidetag 1-20\`\n`;
+                p += `• \`.addhidetag match official\`\n`;
+                p += `• \`.addhidetag all confirm\`\n\n`;
+                p += `Total grup belum hidetag: ${available.length}\n`;
+                p += `_Grup yg didaftarkan akan otomatis dipasang hidetag saat promosi._`;
+                return await sock.sendMessage(jid, { text: p });
+            }
+
+            const sel = resolveGroupSelection(args.slice(1), available);
+
+            if (sel.mode === 'need-confirm') {
+                return await sock.sendMessage(jid, { text: `⚠️ Akan menambah *SEMUA ${sel.total} grup* ke hidetag.\nKalau yakin: *.addhidetag all confirm*` });
+            }
+            if (sel.mode === 'help-match') {
+                return await sock.sendMessage(jid, { text: '❌ Masukkan kata kunci.\nContoh: *.addhidetag match official*' });
+            }
+            if (sel.mode === 'help' || sel.ids.length === 0) {
+                return await sock.sendMessage(jid, { text: '❌ Tidak ada grup yg cocok.' });
+            }
+
+            let added = 0;
+            for (const id of sel.ids) {
+                if (!hidetagGroups.includes(id)) {
+                    hidetagGroups.push(id);
+                    added++;
                 }
             }
-            if (addedCount > 0) {
-                saveConfig();
-                await sock.sendMessage(jid, { text: `✅ Berhasil mendaftarkan ${addedCount} grup ke list hidetag.` });
-            } else {
-                let p = `📢 *DAFTAR HIDETAG GRUP*\n\n`;
-                p += `Cara penggunaan:\n`;
-                p += `*.addhidetag 1 2 5* (Gunakan nomor urut dari .listgrup)\n`;
-                p += `*.addhidetag id_grup1 id_grup2*\n\n`;
-                p += `_Grup yang didaftarkan akan otomatis dipasang hidetag saat bot mengirim promosi ke sana._`;
-                await sock.sendMessage(jid, { text: p });
-            }
+            saveConfig();
+
+            let reply = `✅ *Berhasil daftarkan ${added} grup ke hidetag*`;
+            if (sel.label) reply += `\n📌 ${sel.label}`;
+            return await sock.sendMessage(jid, { text: reply });
         }
 
         if (command === '.delhidetag') {
-            let removedCount = 0;
-            for (let i = 1; i < args.length; i++) {
-                const target = args[i];
-                let targetId = target;
-                const index = hidetagGroups.indexOf(targetId);
-                if (index > -1) {
-                    hidetagGroups.splice(index, 1);
-                    removedCount++;
-                }
+            const allGroups = await getGroups();
+            const tagged = allGroups.filter(g => hidetagGroups.includes(g.id));
+
+            if (args.length === 1) {
+                if (tagged.length === 0) return await sock.sendMessage(jid, { text: '⚠️ Tidak ada grup ter-hidetag.' });
+                let p = `🔓 *MENU HAPUS HIDETAG*\n\n`;
+                p += `• \`.delhidetag 1,3,5\`\n`;
+                p += `• \`.delhidetag 1-10\`\n`;
+                p += `• \`.delhidetag all confirm\`\n\n`;
+                p += `*Daftar hidetag (${tagged.length}):*\n`;
+                tagged.slice(0, 30).forEach((g, i) => p += `${i + 1}. ${g.subject.substring(0, 45)}\n`);
+                return await sock.sendMessage(jid, { text: p });
             }
-            if (removedCount > 0) {
-                saveConfig();
-                await sock.sendMessage(jid, { text: `✅ Berhasil menghapus ${removedCount} grup dari list hidetag.` });
-            } else {
-                let p = `🔓 *HAPUS HIDETAG GRUP*\n\n`;
-                p += `Cara penggunaan:\n`;
-                p += `*.delhidetag id_grup1 id_grup2*\n\n`;
-                p += `_Grup yang dihapus tidak akan lagi dipasang hidetag otomatis._`;
-                await sock.sendMessage(jid, { text: p });
+
+            const sel = resolveGroupSelection(args.slice(1), tagged);
+
+            if (sel.mode === 'need-confirm') {
+                return await sock.sendMessage(jid, { text: `⚠️ Akan menghapus *SEMUA ${sel.total} grup* dari hidetag.\nKalau yakin: *.delhidetag all confirm*` });
             }
+            if (sel.mode === 'help' || sel.ids.length === 0) {
+                return await sock.sendMessage(jid, { text: '❌ Tidak ada grup yg cocok.' });
+            }
+
+            let removed = 0;
+            for (const id of sel.ids) {
+                const idx = hidetagGroups.indexOf(id);
+                if (idx > -1) { hidetagGroups.splice(idx, 1); removed++; }
+            }
+            saveConfig();
+            return await sock.sendMessage(jid, { text: `✅ Berhasil hapus ${removed} grup dari hidetag.` });
         }
 
 
@@ -2665,10 +2796,10 @@ async function startBot() {
 ┣━━『 *👥 MANAJEMEN GRUP* 』
 ┃ ⌬ *.listgrup* [halaman] — Daftar semua grup
 ┃ ⌬ *.cekgrup* <nama> — Cari grup by nama
-┃ ⌬ *.blacklist* — Blacklist grup (via Poll)
-┃ ⌬ *.unblacklist* — Hapus grup dari blacklist
-┃ ⌬ *.addhidetag* — Daftar grup hidetag
-┃ ⌬ *.delhidetag* — Hapus grup hidetag
+┃ ⌬ *.blacklist* <1,3,5-10/all/match kata> — Blacklist cepat
+┃ ⌬ *.unblacklist* <1,3,5-10/all/match kata> — Hapus blacklist
+┃ ⌬ *.addhidetag* <1,3,5-10/all/match kata> — Daftar grup hidetag
+┃ ⌬ *.delhidetag* <1,3,5-10/all> — Hapus grup hidetag
 ┃ ⌬ *.blacklistkata* <kata1, kata2> — Filter nama grup
 ┃ ⌬ *.cleangrup* — Keluar dari grup tidak aktif
 ┃ ⌬ *.listguarded* — Lihat grup yang ada bot jaga
