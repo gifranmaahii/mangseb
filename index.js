@@ -19,8 +19,27 @@ const crypto = require('crypto');
 
 const logger = pino({ level: 'silent' });
 
+// Global error handler — agar bot tidak crash karena error tak terduga
+process.on('uncaughtException', (err) => {
+    console.error('[FATAL] Uncaught Exception:', err?.message || err);
+    // jangan exit, biarkan PM2 yg handle restart kalau benar2 fatal
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('[FATAL] Unhandled Rejection:', reason?.message || reason);
+});
+
 const sessionName = process.argv[2] || 'auth_info';
 const configFile = process.argv[2] ? `./config_${process.argv[2]}.json` : './config.json';
+
+// Throttle helper agar bot tidak membanjiri chat sendiri (penyebab utama WA ngelag)
+const notifyThrottle = new Map(); // key -> last sent timestamp
+function canNotify(key, minIntervalMs = 60000) {
+    const now = Date.now();
+    const last = notifyThrottle.get(key) || 0;
+    if (now - last < minIntervalMs) return false;
+    notifyThrottle.set(key, now);
+    return true;
+}
 
 let savedMessage = null;
 let savedSwgcMessage = null; // Pesan khusus untuk SWGC
@@ -110,37 +129,38 @@ async function getGroups() {
     return groupCache || [];
 }
 
-// Fungsi membersihkan file sesi lama (> 2 hari)
+// Fungsi membersihkan file sesi lama (>1 hari) agar folder auth tidak membengkak
+// Folder auth yang besar = baca/tulis lambat = WA terasa ngelag.
 function cleanupSessions() {
     if (!fs.existsSync(sessionName)) return;
     const files = fs.readdirSync(sessionName);
     const now = Date.now();
     let deletedCount = 0;
-    
-    // Daftar prefix file yang aman untuk dibersihkan jika sudah usang
+
+    // sender-key dan session paling sering menumpuk; pre-key punya rotasi sendiri
     const cleanupPrefixes = ['session-', 'pre-key-', 'sender-key-', 'app-state-', 'next-pre-key-'];
-    
+    const MAX_AGE = 24 * 60 * 60 * 1000; // 1 hari
+
     files.forEach(file => {
+        if (file === 'creds.json') return;
         const isTarget = cleanupPrefixes.some(prefix => file.startsWith(prefix)) && file.endsWith('.json');
-        if (isTarget && file !== 'creds.json') {
-            const filePath = `${sessionName}/${file}`;
-            try {
-                const stats = fs.statSync(filePath);
-                const ageMs = now - stats.mtimeMs;
-                if (ageMs > 2 * 24 * 60 * 60 * 1000) { // Hapus jika > 2 hari
-                    fs.unlinkSync(filePath);
-                    deletedCount++;
-                }
-            } catch(e) {}
-        }
+        if (!isTarget) return;
+        const filePath = `${sessionName}/${file}`;
+        try {
+            const stats = fs.statSync(filePath);
+            if (now - stats.mtimeMs > MAX_AGE) {
+                fs.unlinkSync(filePath);
+                deletedCount++;
+            }
+        } catch(e) {}
     });
-    if (deletedCount > 0) console.log(`[CLEANUP] Berhasil menghapus ${deletedCount} file sesi/kunci usang untuk menghemat ruang.`);
+    if (deletedCount > 0) console.log(`[CLEANUP] Hapus ${deletedCount} file sesi/kunci usang.`);
 }
 
-// Cleanup interval lebih sering (setiap 2 menit)
+// Cleanup interval (5 menit) — bersihkan record memori + file sesi usang
 setInterval(() => {
     const now = Date.now();
-    // Bersihkan record pesan yang sudah lewat 5 menit (sebelumnya 10 menit)
+    // Bersihkan record pesan yang sudah lewat 5 menit
     for (const [id, data] of sentMessagesRecord.entries()) {
         if (now - data.timestamp > 300000) sentMessagesRecord.delete(id);
     }
@@ -148,18 +168,26 @@ setInterval(() => {
     for (const [id, timestamp] of intentionalDeletions.entries()) {
         if (now - timestamp > 60000) intentionalDeletions.delete(id);
     }
-    
-    // Paksa GC jika tersedia (jalankan dengan --expose-gc)
-    if (global.gc) {
+    // Bersihkan throttle log
+    for (const [key, ts] of notifyThrottle.entries()) {
+        if (now - ts > 3600000) notifyThrottle.delete(key);
+    }
+
+    // Hard cap untuk Map agar tidak bocor memori bila ada bug deteksi
+    if (sentMessagesRecord.size > 5000) {
+        const entries = [...sentMessagesRecord.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp);
+        for (let i = 0; i < entries.length - 2500; i++) sentMessagesRecord.delete(entries[i][0]);
+    }
+
+    // Cleanup file sesi/kunci tiap interval (operasi disk ringan)
+    cleanupSessions();
+
+    // Trigger GC bila tersedia (--expose-gc), maks 1x per 30 menit agar tidak mengganggu
+    if (global.gc && (!global.__lastGc || now - global.__lastGc > 30 * 60 * 1000)) {
         global.gc();
-        console.log('[MEM] Garbage Collection executed.');
+        global.__lastGc = now;
     }
-    
-    // Jalankan pembersihan sesi setiap 1 jam
-    if (new Date().getMinutes() < 2) {
-        cleanupSessions();
-    }
-}, 120000);
+}, 5 * 60 * 1000);
 
 // Load scraped links
 if (fs.existsSync(scrapedLinksFile)) {
@@ -379,7 +407,7 @@ function processSpinText(text) {
 }
 
 // Helper: kirim pesan dengan retry & fallback
-async function sendWithRetry(groupId, message, participants = null, maxRetries = 3) {
+async function sendWithRetry(groupId, message, participants = null, maxRetries = 2) {
     if (!activeSock) return null;
 
     // --- LOGIKA EDIT MODE (BYPASS SENSOR) ---
@@ -393,7 +421,6 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                 if (!activeSock.ws?.isOpen) throw new Error(`WebSocket disconnected`);
             }
 
-            let messageId = activeSock.generateMessageTag();
             let finalMessage = JSON.parse(JSON.stringify(message));
             const type = getContentType(finalMessage);
 
@@ -407,8 +434,6 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                 if (linkRegex.test(originalContent)) {
                     console.log(`[BYPASS] Mengirim placeholder: "${bypassPlaceholder}" ke grup ${groupId}...`);
                     
-                    // Kita kirim teks placeholder dulu (tanpa link)
-                    // Pastikan metadata seperti mentions/contextInfo tetap terbawa jika perlu
                     const contextInfo = finalMessage.contextInfo || (type && finalMessage[type]?.contextInfo) || null;
                     
                     const firstMsg = await activeSock.sendMessage(groupId, { 
@@ -423,8 +448,6 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                         setTimeout(async () => {
                             try {
                                 if (!activeSock) return;
-                                
-                                // Siapkan objek edit yang lebih spesifik agar pasti berhasil
                                 let editObj = { edit: targetKey };
                                 const msgType = getContentType(finalMessage);
                                 
@@ -432,12 +455,10 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                                     editObj.text = finalMessage.conversation;
                                 } else if (msgType === 'extendedTextMessage') {
                                     editObj.text = finalMessage.extendedTextMessage.text;
-                                    // Bawa contextInfo (seperti info newsletter/mention) jika ada
                                     if (finalMessage.extendedTextMessage.contextInfo) {
                                         editObj.contextInfo = finalMessage.extendedTextMessage.contextInfo;
                                     }
                                 } else {
-                                    // Fallback untuk tipe lain (gambar/video dengan caption)
                                     Object.assign(editObj, finalMessage);
                                 }
 
@@ -446,7 +467,8 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                             } catch (e) {
                                 console.error(`[BYPASS] ❌ Gagal edit pesan di ${groupId}:`, e.message);
                             }
-                        }, 5000); // Jeda 5 detik
+                        }, 5000);
+                        sentMessagesRecord.set(targetKey.id, { groupId, timestamp: Date.now() });
                         return targetKey.id;
                     }
                 }
@@ -475,27 +497,35 @@ async function sendWithRetry(groupId, message, participants = null, maxRetries =
                 }
             }
 
+            // Selalu pakai sendMessage agar dapat key.id sesungguhnya (untuk auto-delete & sensor detection)
             let result;
-            if (attempt <= 2) {
-                // Gunakan relayMessage agar metadata asli (seperti Newsletter info) tetap terjaga jika ada
-                await activeSock.relayMessage(groupId, finalMessage, { messageId });
+            if (finalMessage.conversation) {
+                result = await activeSock.sendMessage(groupId, { text: finalMessage.conversation });
+            } else if (finalMessage.extendedTextMessage) {
+                result = await activeSock.sendMessage(groupId, {
+                    text: finalMessage.extendedTextMessage.text,
+                    contextInfo: finalMessage.extendedTextMessage.contextInfo
+                });
+            } else if (finalMessage[type]) {
+                result = await activeSock.sendMessage(groupId, { [type]: finalMessage[type] });
             } else {
-                // Fallback ke sendMessage jika relay gagal terus
-                if (finalMessage.conversation) result = await activeSock.sendMessage(groupId, { text: finalMessage.conversation });
-                else if (finalMessage.extendedTextMessage) result = await activeSock.sendMessage(groupId, { text: finalMessage.extendedTextMessage.text });
-                else if (finalMessage[type]) result = await activeSock.sendMessage(groupId, { [type]: finalMessage[type] });
-                if (result?.key?.id) messageId = result.key.id;
+                // Fallback ke relay untuk tipe yg tidak dikenali (newsletter forward, dll)
+                const messageId = activeSock.generateMessageTag();
+                await activeSock.relayMessage(groupId, finalMessage, { messageId });
+                sentMessagesRecord.set(messageId, { groupId, timestamp: Date.now() });
+                return messageId;
             }
 
+            const messageId = result?.key?.id;
             if (messageId) {
                 sentMessagesRecord.set(messageId, { groupId, timestamp: Date.now() });
             }
 
-            return messageId;
+            return messageId || null;
 
         } catch (err) {
-            console.error(`[RETRY] Attempt ${attempt}/${maxRetries} gagal:`, err.message);
-            if (attempt < maxRetries) await new Promise(r => setTimeout(r, 2000));
+            console.error(`[RETRY] Attempt ${attempt}/${maxRetries} gagal di ${groupId}:`, err.message);
+            if (attempt < maxRetries) await new Promise(r => setTimeout(r, 3000));
         }
     }
     return null;
@@ -661,11 +691,11 @@ async function runSpamCycle() {
             let skipCount = 0;
             let failedGroups = [];
 
-            // Kirim notifikasi mulai ke owner
+            // Kirim notifikasi mulai ke owner (throttle: 1x per 30 menit agar chat sendiri tidak banjir)
             try {
-                if (spamOwnerJid) {
+                if (spamOwnerJid && canNotify('spam-start', 30 * 60 * 1000)) {
                     await activeSock.sendMessage(spamOwnerJid, { 
-                        text: `🔄 *Siklus #${cycleNum} DIMULAI*\n\n📊 Memindai ${groups.length} grup (Grup Blacklist/Admin-Only akan otomatis dilewati).\n⏰ ${startTime.toLocaleString('id-ID')}\n\n_Mengirim promosi..._` 
+                        text: `🔄 *Siklus #${cycleNum} DIMULAI*\n\n📊 Memindai ${groups.length} grup (Grup Blacklist/Admin-Only akan otomatis dilewati).\n⏰ ${startTime.toLocaleString('id-ID')}\n\n_Mengirim promosi..._\n\n_Notifikasi mulai dipampatkan 30 menit untuk mengurangi lag._` 
                     });
                 }
             } catch(e) {
@@ -730,7 +760,7 @@ async function runSpamCycle() {
                     let msgObj = messagesToSend[j];
                     if (j > 0) await new Promise(r => setTimeout(r, doubleMessageDelay));
 
-                    sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
+                    let sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
 
                     if (sentMsgId) {
                         isAnySuccess = true;
@@ -781,9 +811,9 @@ async function runSpamCycle() {
             console.log(`[SPAM] Berhasil: ${successCount} | Gagal: ${failCount} | Dilewati: ${skipCount}`);
             console.log(`[SPAM] Durasi: ${durasiStr}`);
 
-            // Kirim laporan ke owner
+            // Kirim laporan ke owner (throttle: 1x per 30 menit untuk mencegah chat banjir)
             try {
-                if (spamOwnerJid) {
+                if (spamOwnerJid && canNotify('spam-report', 30 * 60 * 1000)) {
                     let reportText = `✅ *LAPORAN SIKLUS #${cycleNum} SELESAI*\n\n`;
                     reportText += `📊 *Hasil Kirim:*\n`;
                     reportText += `├ ✅ Berhasil: ${successCount} grup\n`;
@@ -885,8 +915,8 @@ async function runAutoSwgcCycle() {
 
         const groups = await getGroups();
         
-        // Kirim notifikasi mulai ke owner
-        if (spamOwnerJid) {
+        // Kirim notifikasi mulai ke owner (throttle)
+        if (spamOwnerJid && canNotify('swgc-start', 30 * 60 * 1000)) {
             activeSock.sendMessage(spamOwnerJid, { 
                 text: `🔄 *AUTO-SWGC SIKLUS #${cycleNum} DIMULAI*\n\n📊 Memindai ${groups.length} grup untuk posting story...\n⏰ ${startTime.toLocaleString('id-ID')}` 
             }).catch(() => {});
@@ -954,8 +984,8 @@ async function runAutoSwgcCycle() {
 
         console.log(`[AUTO-SWGC] Siklus #${cycleNum} selesai.`);
 
-        // Kirim laporan ke owner
-        if (spamOwnerJid) {
+        // Kirim laporan ke owner (throttle)
+        if (spamOwnerJid && canNotify('swgc-report', 30 * 60 * 1000)) {
             let reportText = `✅ *LAPORAN AUTO-SWGC SIKLUS #${cycleNum} SELESAI*\n\n`;
             reportText += `📊 *Hasil Story:*\n`;
             reportText += `├ 📺 Status WA: Terposting\n`;
@@ -1005,17 +1035,21 @@ async function startBot() {
         logger,
         auth: {
             creds: state.creds,
-            keys: state.keys,
+            // Cache Signal key di RAM agar tidak hit disk tiap encrypt/decrypt.
+            // Tanpa ini, folder auth_info dengan ribuan file = WA terasa lag.
+            keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
-        printQRInTerminal: true,
+        // printQRInTerminal deprecated; QR ditangani di event connection.update
         browser: ['Mangseb Bot Pro', 'Windows', '3.0.0'],
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
-        markOnline: true, 
-        shouldSyncHistoryMessage: () => false, 
+        markOnline: false, // jangan paksa online — kurangi push notif aneh
+        shouldSyncHistoryMessage: () => false,
         retryRequestDelayMs: 5000,
         connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 0, 
+        defaultQueryTimeoutMs: 60000, // 60 detik, bukan 0 (infinite = bocor memori)
+        emitOwnEvents: false, // tidak perlu echo event diri sendiri
+        keepAliveIntervalMs: 30000,
     });
 
     if (!sock.authState.creds.registered) {
@@ -1075,10 +1109,15 @@ async function startBot() {
         }
 
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Koneksi terputus karena ', lastDisconnect.error, ', reconnecting ', shouldReconnect);
+            const statusCode = (lastDisconnect?.error)?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            console.log(`[CONN] Terputus (code=${statusCode}). Reconnect: ${shouldReconnect}`);
             if (shouldReconnect) {
-                startBot();
+                // Backoff 5 detik agar tidak loop reconnect terlalu cepat (memicu rate-limit WA)
+                global.__reconnectAttempts = (global.__reconnectAttempts || 0) + 1;
+                const delay = Math.min(5000 * global.__reconnectAttempts, 60000);
+                console.log(`[CONN] Reconnect dalam ${delay/1000}s (attempt ${global.__reconnectAttempts})`);
+                setTimeout(() => startBot(), delay);
             } else {
                 console.log('Bot logged out. Menghapus folder session otomatis...');
                 if (fs.existsSync(sessionName)) {
@@ -1088,6 +1127,7 @@ async function startBot() {
                 process.exit(0);
             }
         } else if (connection === 'open') {
+            global.__reconnectAttempts = 0;
             console.log('Bot berhasil terkoneksi!');
             const botNumber = sock.user.id.split(':')[0];
             if (!ownerNumbers.includes(botNumber)) {
@@ -1106,10 +1146,13 @@ async function startBot() {
             const msg = m.messages[0];
             if (!msg || !msg.message) return;
 
+            // Hanya proses pesan baru (notify), bukan history sync
+            if (m.type && m.type !== 'notify') return;
+
             // --- FILTER PESAN LAMA (HISTORY/DELAYED) ---
             const messageTimestamp = msg.messageTimestamp;
             const nowSeconds = Math.floor(Date.now() / 1000);
-            if (nowSeconds - messageTimestamp > 60) {
+            if (messageTimestamp && nowSeconds - messageTimestamp > 60) {
                 // Abaikan pesan yang lebih tua dari 60 detik
                 return;
             }
@@ -1940,7 +1983,7 @@ async function startBot() {
                         const msgObj = messagesToSend[j];
                         if (j > 0) await new Promise(r => setTimeout(r, doubleMessageDelay));
 
-                        sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
+                        let sentMsgId = await sendWithRetry(group.id, msgObj.message, group.participants);
 
                         if (sentMsgId) {
                             isAnySuccess = true;

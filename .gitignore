@@ -1,2 +1,37 @@
+# Dependencies
 node_modules/
+
+# Auth & session WhatsApp (JANGAN di-commit, mengandung kunci enkripsi)
 auth_info/
+auth_info_*/
+auth_info_*.json
+*.session.json
+
+# Config user (mengandung pesan promosi & nomor pribadi)
+config.json
+config_*.json
+
+# Data scraper
+scraped_links.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pm2-*.log
+
+# Sampah workspace
+scratch/
+decoded_*.js
+base64_img.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# PM2 runtime
+.pm2/
