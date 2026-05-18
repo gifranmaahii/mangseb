@@ -357,15 +357,62 @@ function resolveGroupSelection(args, sourceGroups) {
         };
     }
 
-    // Mode index: angka, range, mix
-    const indices = parseIndexList(args, sourceGroups.length);
-    if (indices.length === 0) return { mode: 'help' };
+    // Cek dulu apakah salah satu argumen adalah JID grup (xxx@g.us)
+    // Lakukan pengecekan ini DULU sebelum parseIndexList agar tidak salah parsing
+    const sourceIds = new Set(sourceGroups.map(g => g.id));
+    const jidMatches = [];
+    const remainingArgs = [];
+    const allGroupsLookup = new Map(sourceGroups.map(g => [g.id, g]));
 
+    for (const raw of args) {
+        const tokens = String(raw).split(',').map(s => s.trim()).filter(Boolean);
+        for (const token of tokens) {
+            // Format JID lengkap: 1234567890@g.us
+            if (token.endsWith('@g.us')) {
+                if (sourceIds.has(token)) {
+                    jidMatches.push(token);
+                }
+                continue;
+            }
+            // Cek juga ID tanpa suffix (kadang user copy hanya angkanya saja)
+            // Nomor panjang (>=15 digit) anggap sebagai ID grup, bukan index
+            if (/^\d{15,}$/.test(token)) {
+                const guess = `${token}@g.us`;
+                if (sourceIds.has(guess)) {
+                    jidMatches.push(guess);
+                    continue;
+                }
+                // Coba cocokkan partial (mungkin user paste ID tanpa suffix tapi tidak persis)
+                const partialMatch = sourceGroups.find(g => g.id.startsWith(token));
+                if (partialMatch) {
+                    jidMatches.push(partialMatch.id);
+                    continue;
+                }
+            }
+            remainingArgs.push(token);
+        }
+    }
+
+    // Mode index untuk argumen yg tersisa (angka, range, mix)
+    const indices = parseIndexList(remainingArgs, sourceGroups.length);
+
+    // Gabung hasil JID + hasil index (dedup)
+    const finalIds = new Set([
+        ...jidMatches,
+        ...indices.map(i => sourceGroups[i].id)
+    ]);
+
+    if (finalIds.size === 0) return { mode: 'help' };
+
+    const idArr = [...finalIds];
     return {
-        ids: indices.map(i => sourceGroups[i].id),
+        ids: idArr,
         mode: 'success',
-        label: `${indices.length} grup terpilih`,
-        previewNames: indices.slice(0, 10).map(i => sourceGroups[i].subject)
+        label: `${idArr.length} grup terpilih`,
+        previewNames: idArr.slice(0, 10).map(id => {
+            const g = allGroupsLookup.get(id);
+            return g?.subject || id;
+        })
     };
 }
 
@@ -382,13 +429,13 @@ async function sendGroupPickerPoll(targetJid, items, type, page = 0, carryOver =
     const totalPages = Math.ceil(items.length / POLL_PAGE_SIZE);
     const pageItems = items.slice(page * POLL_PAGE_SIZE, (page + 1) * POLL_PAGE_SIZE);
 
-    // Format opsi: "1. Nama Grup" supaya user paham
+    // Format opsi: "1. Nama Grup"
     const baseIndex = page * POLL_PAGE_SIZE;
-    const pageOptionNames = pageItems.map((g, i) => `${baseIndex + i + 1}. ${g.subject.substring(0, 80)}`);
+    const pageOptionNames = pageItems.map((g, i) => `${baseIndex + i + 1}. ${(g.subject || 'Grup tanpa nama').substring(0, 80)}`);
 
     // Tombol kontrol di akhir poll
     const isLastPage = page >= totalPages - 1;
-    const controlOptionName = isLastPage ? '✅ SELESAI (proses centangan)' : '➡️ HALAMAN BERIKUTNYA';
+    const controlOptionName = isLastPage ? '✅ SELESAI (proses)' : '➡️ HALAMAN BERIKUTNYA';
     const allOptionNames = [...pageOptionNames, controlOptionName];
 
     const titleMap = {
@@ -397,43 +444,53 @@ async function sendGroupPickerPoll(targetJid, items, type, page = 0, carryOver =
         'hidetag-add': '📢 TAMBAH HIDETAG',
         'hidetag-del': '🔕 HAPUS HIDETAG',
     };
-    const title = `${titleMap[type] || 'PILIH GRUP'}\nHal ${page + 1}/${totalPages} • Centang grup yg mau diproses, lalu pilih SELESAI/LANJUT`;
+    const title = `${titleMap[type] || 'PILIH GRUP'}\nHal ${page + 1}/${totalPages} • Centang grup, lalu klik SELESAI/LANJUT`;
 
-    // Generate poll dengan messageSecret yang kita kontrol (untuk decrypt vote nanti)
+    // Generate messageSecret manual agar kita bisa decrypt vote nanti
     const messageSecret = crypto.randomBytes(32);
-    const pollMsg = await generateWAMessageFromContent(targetJid, {
-        messageContextInfo: { messageSecret },
-        pollCreationMessage: {
-            name: title,
-            options: allOptionNames.map(name => ({ optionName: name })),
-            selectableOptionsCount: 0 // 0 = multi-select
-        }
-    }, { userJid: activeSock.user.id });
 
-    await activeSock.relayMessage(targetJid, pollMsg.message, { messageId: pollMsg.key.id });
-
-    activePolls.set(pollMsg.key.id, {
-        type,
-        page,
-        totalPages,
-        pageItems,
-        allItems: items,
-        ownerJid: targetJid,
-        pollMsgId: pollMsg.key.id,
-        pollCreatorJid: jidNormalizedUser(activeSock.user.id),
-        messageSecret,
-        optionNames: allOptionNames,
-        controlOptionName,
-        selectedSoFar: carryOver,
-        createdAt: Date.now()
-    });
-
-    // Cleanup poll session yang lewat 30 menit
-    for (const [id, sess] of activePolls.entries()) {
-        if (Date.now() - sess.createdAt > 30 * 60 * 1000) activePolls.delete(id);
+    let sent;
+    try {
+        sent = await activeSock.sendMessage(targetJid, {
+            poll: {
+                name: title,
+                values: allOptionNames,
+                selectableCount: 0, // 0 = multi-select (boleh centang berapa pun)
+                messageSecret: messageSecret
+            }
+        });
+    } catch (e) {
+        console.error('[POLL] Gagal kirim poll:', e.message);
+        // Fallback ke teks kalau poll gagal
+        let fallback = `❌ Gagal kirim Poll. Pakai cara teks:\n\n*Daftar grup:*\n`;
+        pageItems.forEach((g, i) => fallback += `${baseIndex + i + 1}. ${g.subject?.substring(0, 45) || g.id}\n`);
+        fallback += `\nKetik mis: \`.${type.startsWith('blacklist-add') ? 'blacklist' : type.startsWith('blacklist-del') ? 'unblacklist' : type.startsWith('hidetag-add') ? 'addhidetag' : 'delhidetag'} 1,3,5-10\``;
+        return await activeSock.sendMessage(targetJid, { text: fallback });
     }
 
-    return pollMsg;
+    if (sent?.key?.id) {
+        activePolls.set(sent.key.id, {
+            type,
+            page,
+            totalPages,
+            pageItems,
+            allItems: items,
+            ownerJid: targetJid,
+            pollMsgId: sent.key.id,
+            pollCreatorJid: jidNormalizedUser(activeSock.user.id),
+            messageSecret,
+            optionNames: allOptionNames,
+            controlOptionName,
+            selectedSoFar: carryOver,
+            createdAt: Date.now()
+        });
+
+        // Cleanup poll session yang lewat 30 menit
+        for (const [id, sess] of activePolls.entries()) {
+            if (Date.now() - sess.createdAt > 30 * 60 * 1000) activePolls.delete(id);
+        }
+    }
+    return sent;
 }
 
 // Eksekusi action setelah user pilih SELESAI
@@ -1342,19 +1399,34 @@ async function startBot() {
                     const pollUpdate = msg.message.pollUpdateMessage;
                     const pollMsgKey = pollUpdate.pollCreationMessageKey;
                     const session = activePolls.get(pollMsgKey?.id);
-                    if (!session) return; // poll tidak dikenal / kadaluarsa
+                    if (!session) {
+                        console.log(`[POLL] Vote untuk poll ID ${pollMsgKey?.id} — session tidak ditemukan (kadaluarsa atau bot baru restart)`);
+                        return;
+                    }
 
                     const voterJid = msg.key.participant || msg.key.remoteJid;
+                    console.log(`[POLL] Vote masuk dari ${voterJid} untuk poll type=${session.type}, page=${session.page}`);
 
                     // Decrypt vote untuk dapat hash opsi yg dicentang
-                    const decrypted = decryptPollVote(pollUpdate.vote, {
-                        pollCreatorJid: session.pollCreatorJid,
-                        pollMsgId: session.pollMsgId,
-                        pollEncKey: session.messageSecret,
-                        voterJid: jidNormalizedUser(voterJid)
-                    });
+                    let decrypted;
+                    try {
+                        decrypted = decryptPollVote(pollUpdate.vote, {
+                            pollCreatorJid: session.pollCreatorJid,
+                            pollMsgId: session.pollMsgId,
+                            pollEncKey: session.messageSecret,
+                            voterJid: jidNormalizedUser(voterJid)
+                        });
+                    } catch (e) {
+                        console.error('[POLL] Gagal decrypt vote:', e.message);
+                        await sock.sendMessage(session.ownerJid, { text: '⚠️ Gagal baca centangan poll. Silakan ketik manual: `.blacklist 1-10` atau `.blacklist match <kata>`.' }).catch(() => {});
+                        activePolls.delete(pollMsgKey.id);
+                        return;
+                    }
 
-                    if (!decrypted?.selectedOptions) return;
+                    if (!decrypted?.selectedOptions || decrypted.selectedOptions.length === 0) {
+                        console.log('[POLL] Vote kosong (user mungkin uncheck semua), abaikan');
+                        return;
+                    }
 
                     // Hash setiap option name lalu match dengan hash dari vote
                     const checkedNames = [];
@@ -1364,6 +1436,8 @@ async function startBot() {
                         if (isChecked) checkedNames.push(optName);
                     }
 
+                    console.log(`[POLL] Centangan: ${checkedNames.length} opsi -> ${checkedNames.slice(0, 3).join(' | ')}`);
+
                     if (checkedNames.length === 0) return;
 
                     // Pisahkan: opsi grup vs tombol kontrol
@@ -1372,6 +1446,7 @@ async function startBot() {
 
                     // Kalau user belum klik tombol kontrol, tunggu
                     if (!controlClicked) {
+                        console.log('[POLL] Tombol SELESAI/LANJUT belum dicentang, tunggu...');
                         return;
                     }
 
@@ -1395,7 +1470,7 @@ async function startBot() {
                         }
                     }
 
-                    // Hapus session lama (one-shot) supaya vote berikutnya tidak men-trigger ulang
+                    // Hapus session lama (one-shot)
                     activePolls.delete(pollMsgKey.id);
 
                     if (session.page >= session.totalPages - 1) {
@@ -1409,7 +1484,7 @@ async function startBot() {
                         await sendGroupPickerPoll(session.ownerJid, session.allItems, session.type, session.page + 1, merged);
                     }
                 } catch (e) {
-                    console.error('[POLL] Error handling vote:', e.message);
+                    console.error('[POLL] Error handling vote:', e.message, e.stack);
                 }
                 return; // jangan lanjut ke handler text command
             }
@@ -1721,6 +1796,7 @@ async function startBot() {
                           `Kalau >11 grup, aku kirim per halaman (vote *LANJUT* untuk halaman berikutnya).\n\n` +
                           `_Cara lain (manual ketik):_\n` +
                           `• \`.blacklist 1,3,5-10\` — pilih nomor/range\n` +
+                          `• \`.blacklist 1234567890@g.us\` — by ID grup\n` +
                           `• \`.blacklist match agama\` — by kata di nama grup\n` +
                           `• \`.blacklist all confirm\` — semua sekaligus\n` +
                           `• \`.blacklist teks\` — paksa mode teks (tanpa poll)`
@@ -1737,35 +1813,49 @@ async function startBot() {
                 return await sock.sendMessage(jid, { text: p });
             }
 
-            const sel = resolveGroupSelection(args.slice(1), available);
+            // Saat ada argumen (angka/range/ID/match/all), pakai SEMUA grup sebagai source.
+            // Loop nanti akan skip yg sudah di-blacklist secara aman.
+            // Index numerik (1-50) tetap mengacu ke daftar lengkap (sama dengan .listgrup).
+            const sel = resolveGroupSelection(args.slice(1), groups);
 
             if (sel.mode === 'need-confirm') {
                 return await sock.sendMessage(jid, {
-                    text: `⚠️ Akan mem-blacklist *SEMUA ${sel.total} grup* yg belum di-blacklist.\n\nKalau yakin ketik:\n*.blacklist all confirm*`
+                    text: `⚠️ Akan mem-blacklist *SEMUA ${sel.total} grup*.\n\nKalau yakin ketik:\n*.blacklist all confirm*`
                 });
             }
             if (sel.mode === 'help-match') {
                 return await sock.sendMessage(jid, { text: '❌ Masukkan kata kunci.\nContoh: *.blacklist match agama keluarga*' });
             }
             if (sel.mode === 'help' || sel.mode === 'empty' || sel.ids.length === 0) {
-                return await sock.sendMessage(jid, { text: '❌ Tidak ada grup yg cocok.\nContoh: *.blacklist 1-10* atau *.blacklist match agama*' });
+                return await sock.sendMessage(jid, {
+                    text: '❌ Tidak ada grup yg cocok.\n\n' +
+                          'Contoh:\n' +
+                          '• `.blacklist 1-10`\n' +
+                          '• `.blacklist 120363xxx@g.us`\n' +
+                          '• `.blacklist match agama`\n\n' +
+                          '_Pastikan ID grupnya benar — bot hanya bisa blacklist grup di mana akun ini join._'
+                });
             }
 
             // Tambahkan ke blacklist (skip yang sudah ada)
             let added = 0;
+            let alreadyExists = 0;
             for (const id of sel.ids) {
                 if (!blacklistedGroups.includes(id)) {
                     blacklistedGroups.push(id);
                     added++;
+                } else {
+                    alreadyExists++;
                 }
             }
             saveConfig();
 
             let reply = `✅ *Berhasil blacklist ${added} grup*`;
+            if (alreadyExists > 0) reply += `\n_(${alreadyExists} grup sudah di-blacklist sebelumnya, dilewati)_`;
             if (sel.label) reply += `\n📌 ${sel.label}`;
             if (sel.previewNames && sel.previewNames.length > 0) {
                 reply += `\n\n*Contoh grup:*\n`;
-                sel.previewNames.forEach((n, i) => reply += `${i + 1}. ${n.substring(0, 45)}\n`);
+                sel.previewNames.forEach((n, i) => reply += `${i + 1}. ${(n || '').toString().substring(0, 45)}\n`);
                 if (sel.ids.length > sel.previewNames.length) {
                     reply += `... dan ${sel.ids.length - sel.previewNames.length} grup lainnya`;
                 }
